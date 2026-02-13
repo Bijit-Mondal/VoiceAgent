@@ -1,1 +1,1 @@
-export { VoiceAgent } from "./VoiceAgent";
+export { VoiceAgent, type VoiceAgentOptions } from "./VoiceAgent";
