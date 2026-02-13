@@ -347,13 +347,22 @@
         let whisperSegmentActive = false; // currently capturing a speech segment
 
         // VAD (Voice Activity Detection) config
-        const VAD_SPEECH_THRESHOLD = 12;   // RMS above this = speech detected
-        const VAD_SILENCE_TIMEOUT = 1500;  // ms of silence before auto-sending segment
-        const VAD_MIN_SEGMENT_MS = 300;    // ignore segments shorter than this
-        const VAD_POLL_INTERVAL = 60;      // ms between VAD checks
+        // Tuned to avoid triggering on light background noise.
+        const VAD_BASE_THRESHOLD = 18;          // absolute floor for speech gate
+        const VAD_NOISE_MULTIPLIER = 2.2;       // speech gate = noiseFloor * multiplier
+        const VAD_SILENCE_HYSTERESIS = 0.65;    // lower gate while already in speech
+        const VAD_SPEECH_START_FRAMES = 4;      // consecutive speech frames to start (~240ms)
+        const VAD_SILENCE_TIMEOUT = 900;        // ms of silence before auto-sending segment
+        const VAD_MIN_SEGMENT_MS = 700;         // ignore short noise bursts
+        const VAD_POLL_INTERVAL = 60;           // ms between VAD checks
+        const VAD_CALIBRATION_MS = 1200;        // initial noise floor calibration
         let vadSilenceTimer = null;
         let vadPollTimer = null;
         let segmentStartTime = 0;
+        let vadSmoothedRms = 0;
+        let vadNoiseFloor = 10;
+        let vadCalibratingUntil = 0;
+        let vadSpeechFrames = 0;
 
         // Audio playback state
         let audioContext = null;
@@ -451,7 +460,7 @@
                     });
                     currentAudioSource = null;
                 } catch (_decodeErr) {
-                    const mime = format === "mp3" ? "audio/mpeg" : `audio/${format}`;
+                    const mime = getMimeTypeForFormat(format);
                     const blob = new Blob([bytes], { type: mime });
                     const url = URL.createObjectURL(blob);
                     const audio = new Audio(url);
@@ -495,6 +504,25 @@
             const bytes = new Uint8Array(len);
             for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
+        }
+
+        function getMimeTypeForFormat(format) {
+            switch ((format || "").toLowerCase()) {
+                case "opus":
+                    return "audio/ogg; codecs=opus";
+                case "ogg":
+                    return "audio/ogg";
+                case "wav":
+                    return "audio/wav";
+                case "mp3":
+                    return "audio/mpeg";
+                case "aac":
+                    return "audio/aac";
+                case "webm":
+                    return "audio/webm";
+                default:
+                    return `audio/${format || "mpeg"}`;
+            }
         }
 
         // ── RMS audio level from analyser ───────────────────────────────────
@@ -658,6 +686,10 @@
             }
 
             whisperListening = true;
+            vadSmoothedRms = 0;
+            vadNoiseFloor = 10;
+            vadSpeechFrames = 0;
+            vadCalibratingUntil = Date.now() + VAD_CALIBRATION_MS;
             startMicBtn.disabled = true;
             stopMicBtn.disabled = false;
 
@@ -666,7 +698,7 @@
             startVADPolling();
 
             setStatus("Listening (Whisper VAD)...", "listening");
-            log("Whisper VAD listening started — speak and it will auto-detect");
+            log("Whisper VAD listening started — calibrating noise floor...");
         }
 
         function stopWhisperListening() {
@@ -688,6 +720,7 @@
 
             teardownAnalyser();
             stopViz();
+            vadSpeechFrames = 0;
 
             startMicBtn.disabled = !connected;
             stopMicBtn.disabled = true;
@@ -711,16 +744,37 @@
             if (!whisperListening) return;
 
             const rms = getCurrentRMS();
-            const isSpeech = rms > VAD_SPEECH_THRESHOLD;
+            // Smooth audio level so tiny spikes don't trigger segments
+            vadSmoothedRms = vadSmoothedRms === 0 ? rms : (vadSmoothedRms * 0.8) + (rms * 0.2);
+
+            // Adaptive noise-floor calibration / tracking
+            // During startup: quick calibration
+            // After startup: slow drift only when not in a speech segment
+            if (Date.now() < vadCalibratingUntil) {
+                vadNoiseFloor = vadNoiseFloor === 0 ? vadSmoothedRms : (vadNoiseFloor * 0.85) + (vadSmoothedRms * 0.15);
+                return;
+            }
+
+            if (!whisperSegmentActive) {
+                vadNoiseFloor = (vadNoiseFloor * 0.97) + (vadSmoothedRms * 0.03);
+            }
+
+            const speechThreshold = Math.max(VAD_BASE_THRESHOLD, vadNoiseFloor * VAD_NOISE_MULTIPLIER);
+            const silenceThreshold = speechThreshold * VAD_SILENCE_HYSTERESIS;
+            const isSpeech = whisperSegmentActive
+                ? vadSmoothedRms > silenceThreshold
+                : vadSmoothedRms > speechThreshold;
 
             if (isSpeech) {
-                // ── Speech detected ──
-                // Auto barge-in: if assistant is speaking, interrupt it
-                autoBargeIn();
-
                 if (!whisperSegmentActive) {
-                    // Start a new recording segment
-                    beginWhisperSegment();
+                    // Debounce: require N consecutive speech frames before start
+                    vadSpeechFrames += 1;
+                    if (vadSpeechFrames >= VAD_SPEECH_START_FRAMES) {
+                        // Auto barge-in only once we are confident speech is real
+                        autoBargeIn();
+                        beginWhisperSegment();
+                        vadSpeechFrames = 0;
+                    }
                 }
 
                 // Reset silence timer — user is still talking
@@ -728,7 +782,14 @@
                     clearTimeout(vadSilenceTimer);
                     vadSilenceTimer = null;
                 }
-            } else if (whisperSegmentActive && !vadSilenceTimer) {
+            } else {
+                // Decay speech frames when signal drops, prevents start on random bursts
+                if (!whisperSegmentActive) {
+                    vadSpeechFrames = Math.max(0, vadSpeechFrames - 1);
+                }
+            }
+
+            if (!isSpeech && whisperSegmentActive && !vadSilenceTimer) {
                 // ── Silence while recording → start countdown ──
                 vadSilenceTimer = setTimeout(() => {
                     vadSilenceTimer = null;
@@ -961,8 +1022,8 @@
 
                 case "audio_chunk": {
                     const bytes = decodeBase64ToBytes(msg.data);
-                    audioQueue.push({ bytes, format: msg.format || "mp3" });
-                    log(`🔊 Audio chunk #${msg.chunkId ?? "?"} (${bytes.length} bytes, ${msg.format || "mp3"})`);
+                    audioQueue.push({ bytes, format: msg.format || "opus" });
+                    log(`🔊 Audio chunk #${msg.chunkId ?? "?"} (${bytes.length} bytes, ${msg.format || "opus"})`);
                     playNextAudioChunk();
                     break;
                 }
@@ -970,7 +1031,7 @@
                 // Full audio (non-streaming fallback)
                 case "audio": {
                     const bytes = decodeBase64ToBytes(msg.data);
-                    audioQueue.push({ bytes, format: msg.format || "mp3" });
+                    audioQueue.push({ bytes, format: msg.format || "opus" });
                     log(`🔊 Full audio (${bytes.length} bytes)`);
                     playNextAudioChunk();
                     break;
@@ -983,7 +1044,7 @@
                     setBadge("interrupted", "idle");
                     if (connected) {
                         setStatus(whisperListening || micShouldRun ? "Listening..." : "Connected",
-                                  whisperListening || micShouldRun ? "listening" : "connected");
+                            whisperListening || micShouldRun ? "listening" : "connected");
                     }
                     break;
 

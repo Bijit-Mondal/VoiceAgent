@@ -55,7 +55,7 @@ Keep responses concise and conversational since they will be spoken aloud.
 Use tools when needed to provide accurate information.`,
         voice: "alloy",
         speechInstructions: "Speak in a friendly, natural conversational tone.",
-        outputFormat: "mp3",
+        outputFormat: "opus",
         streamingSpeech: {
             minChunkSize: 40,
             maxChunkSize: 180,
