@@ -29,7 +29,60 @@ Streaming voice/text agent SDK built on AI SDK with optional WebSocket transport
 
 `VOICE_WS_ENDPOINT` is optional for text-only usage.
 
-## VoiceAgent configuration
+## VoiceAgent usage (as in the demo)
+
+Minimal end-to-end example using AI SDK tools, streaming text, and streaming TTS:
+
+```ts
+import "dotenv/config";
+import { VoiceAgent } from "./src";
+import { tool } from "ai";
+import { z } from "zod";
+import { openai } from "@ai-sdk/openai";
+
+const weatherTool = tool({
+   description: "Get the weather in a location",
+   inputSchema: z.object({ location: z.string() }),
+   execute: async ({ location }) => ({ location, temperature: 72, conditions: "sunny" }),
+});
+
+const agent = new VoiceAgent({
+   model: openai("gpt-4o"),
+   transcriptionModel: openai.transcription("whisper-1"),
+   speechModel: openai.speech("gpt-4o-mini-tts"),
+   instructions: "You are a helpful voice assistant.",
+   voice: "alloy",
+   speechInstructions: "Speak in a friendly, natural conversational tone.",
+   outputFormat: "mp3",
+   streamingSpeech: {
+      minChunkSize: 40,
+      maxChunkSize: 180,
+      parallelGeneration: true,
+      maxParallelRequests: 2,
+   },
+   endpoint: process.env.VOICE_WS_ENDPOINT,
+   tools: { getWeather: weatherTool },
+});
+
+agent.on("text", ({ role, text }) => {
+   const prefix = role === "user" ? "👤" : "🤖";
+   console.log(prefix, text);
+});
+
+agent.on("chunk:text_delta", ({ text }) => process.stdout.write(text));
+agent.on("speech_start", ({ streaming }) => console.log("speech_start", streaming));
+agent.on("audio_chunk", ({ chunkId, format, uint8Array }) => {
+   console.log("audio_chunk", chunkId, format, uint8Array.length);
+});
+
+await agent.sendText("What's the weather in San Francisco?");
+
+if (process.env.VOICE_WS_ENDPOINT) {
+   await agent.connect(process.env.VOICE_WS_ENDPOINT);
+}
+```
+
+### Configuration options
 
 The agent accepts:
 
@@ -44,10 +97,29 @@ The agent accepts:
 - `speechInstructions` (optional): style instructions for TTS
 - `outputFormat` (optional): audio format, default `mp3`
 - `streamingSpeech` (optional):
-   - `minChunkSize`
-   - `maxChunkSize`
-   - `parallelGeneration`
-   - `maxParallelRequests`
+    - `minChunkSize`
+    - `maxChunkSize`
+    - `parallelGeneration`
+    - `maxParallelRequests`
+
+### Common methods
+
+- `sendText(text)` – process text input (streamed response)
+- `sendAudio(base64Audio)` – process base64 audio input
+- `sendAudioBuffer(buffer)` – process raw audio buffer input
+- `transcribeAudio(buffer)` – transcribe audio directly
+- `generateAndSendSpeechFull(text)` – non-streaming TTS fallback
+- `interruptSpeech(reason)` – interrupt streaming speech (barge‑in)
+- `connect(url?)` / `handleSocket(ws)` – WebSocket usage
+
+### Key events (from demo)
+
+- `text` – user/assistant messages
+- `chunk:text_delta` – streaming text deltas
+- `chunk:tool_call` / `tool_result` – tool lifecycle
+- `speech_start` / `speech_complete` / `speech_interrupted`
+- `speech_chunk_queued` / `audio_chunk` / `audio`
+- `connected` / `disconnected`
 
 ## Run (text-only check)
 
