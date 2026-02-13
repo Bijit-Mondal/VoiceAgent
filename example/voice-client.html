@@ -1,0 +1,1088 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voice Agent Web Client</title>
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            max-width: 880px;
+            margin: 24px auto;
+            padding: 0 16px;
+            color: #1a1a1a;
+            background: #f8f9fa;
+        }
+
+        h1 {
+            margin-bottom: 4px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        input[type="text"],
+        button,
+        select {
+            padding: 10px 14px;
+            font-size: 14px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        button {
+            cursor: pointer;
+            background: #fff;
+            transition: background 0.15s, border-color 0.15s;
+            white-space: nowrap;
+        }
+
+        button:hover:not(:disabled) {
+            background: #f0f0f0;
+        }
+
+        button:disabled {
+            opacity: 0.45;
+            cursor: default;
+        }
+
+        button.primary {
+            background: #2563eb;
+            color: #fff;
+            border-color: #2563eb;
+        }
+
+        button.primary:hover:not(:disabled) {
+            background: #1d4ed8;
+        }
+
+        button.danger {
+            background: #dc2626;
+            color: #fff;
+            border-color: #dc2626;
+        }
+
+        button.danger:hover:not(:disabled) {
+            background: #b91c1c;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.7;
+            }
+        }
+
+        select {
+            background: #fff;
+        }
+
+        #status {
+            font-weight: 600;
+            margin: 0 0 6px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        .status-dot.disconnected {
+            background: #9ca3af;
+        }
+
+        .status-dot.connected {
+            background: #22c55e;
+        }
+
+        .status-dot.listening {
+            background: #f59e0b;
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.speaking {
+            background: #3b82f6;
+            animation: pulse 0.8s infinite;
+        }
+
+        .panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            min-height: 48px;
+            margin-bottom: 12px;
+            background: #fafafa;
+        }
+
+        .panel.transcript {
+            border-left: 3px solid #2563eb;
+        }
+
+        .panel.assistant {
+            border-left: 3px solid #22c55e;
+        }
+
+        .panel.reasoning {
+            border-left: 3px solid #f59e0b;
+            font-style: italic;
+            color: #666;
+            font-size: 13px;
+        }
+
+        .panel.tools {
+            border-left: 3px solid #8b5cf6;
+            font-size: 13px;
+        }
+
+        #log {
+            white-space: pre-wrap;
+            background: #1a1a2e;
+            color: #c8d6e5;
+            max-height: 280px;
+            overflow: auto;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        h3 {
+            margin: 14px 0 6px;
+            font-size: 15px;
+            color: #374151;
+        }
+
+        label {
+            font-size: 13px;
+            color: #555;
+            margin-right: 4px;
+        }
+
+        .text-input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .text-input-row input {
+            flex: 1;
+        }
+
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+
+        .badge.streaming {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+
+        .badge.idle {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+
+        .audio-viz {
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .audio-viz-bar {
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 2px;
+            width: 0%;
+            transition: width 0.15s;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🎙️ Voice Agent Web Client</h1>
+    <p class="subtitle">Real-time voice I/O with streaming speech generation. Supports browser STT or server-side
+        Whisper transcription.</p>
+
+    <!-- Connection -->
+    <div class="card">
+        <div class="row">
+            <input type="text" id="endpoint" value="ws://localhost:8080" placeholder="WebSocket endpoint" />
+            <button id="connectBtn" class="primary">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+        <div id="status"><span class="status-dot disconnected"></span>Disconnected</div>
+    </div>
+
+    <!-- Input Controls -->
+    <div class="card">
+        <div class="row">
+            <label for="inputMode">Input mode:</label>
+            <select id="inputMode">
+                <option value="browser-stt">Browser Speech Recognition</option>
+                <option value="server-whisper">Server-side Whisper</option>
+            </select>
+        </div>
+        <div class="row">
+            <button id="startMicBtn" disabled>🎤 Start Mic</button>
+            <button id="stopMicBtn" disabled>⏹ Stop Mic</button>
+            <button id="interruptBtn" class="danger" disabled>✋ Interrupt</button>
+        </div>
+        <div class="audio-viz" id="audioViz">
+            <div class="audio-viz-bar" id="audioVizBar"></div>
+        </div>
+        <div class="text-input-row">
+            <input type="text" id="textInput" placeholder="Or type a message and press Enter..." disabled />
+            <button id="sendTextBtn" class="primary" disabled>Send</button>
+        </div>
+    </div>
+
+    <!-- Output Panels -->
+    <h3>👤 You said</h3>
+    <div class="panel transcript" id="transcript">&mdash;</div>
+
+    <h3>🤖 Assistant <span class="badge idle" id="streamBadge">idle</span></h3>
+    <div class="panel assistant" id="assistant"></div>
+
+    <div id="reasoningSection" class="hidden">
+        <h3>💭 Reasoning</h3>
+        <div class="panel reasoning" id="reasoning"></div>
+    </div>
+
+    <div id="toolsSection" class="hidden">
+        <h3>🛠️ Tools</h3>
+        <div class="panel tools" id="tools"></div>
+    </div>
+
+    <h3>📋 Logs</h3>
+    <div id="log"></div>
+
+    <script>
+        // ── Elements ────────────────────────────────────────────────────────
+        const endpointEl = document.getElementById("endpoint");
+        const connectBtn = document.getElementById("connectBtn");
+        const disconnectBtn = document.getElementById("disconnectBtn");
+        const inputModeEl = document.getElementById("inputMode");
+        const startMicBtn = document.getElementById("startMicBtn");
+        const stopMicBtn = document.getElementById("stopMicBtn");
+        const interruptBtn = document.getElementById("interruptBtn");
+        const textInput = document.getElementById("textInput");
+        const sendTextBtn = document.getElementById("sendTextBtn");
+        const statusEl = document.getElementById("status");
+        const transcriptEl = document.getElementById("transcript");
+        const assistantEl = document.getElementById("assistant");
+        const reasoningSection = document.getElementById("reasoningSection");
+        const reasoningEl = document.getElementById("reasoning");
+        const toolsSection = document.getElementById("toolsSection");
+        const toolsEl = document.getElementById("tools");
+        const logEl = document.getElementById("log");
+        const streamBadge = document.getElementById("streamBadge");
+        const audioVizBar = document.getElementById("audioVizBar");
+
+        // ── State ───────────────────────────────────────────────────────────
+        let ws = null;
+        let connected = false;
+
+        // Browser STT state
+        let recognition = null;
+        let micShouldRun = false;
+        let micRestartTimer = null;
+
+        // Server Whisper recording state
+        let mediaStream = null;          // mic stream stays open while listening
+        let mediaRecorder = null;        // created per speech segment
+        let audioChunks = [];
+        let whisperListening = false;    // mic is open and VAD is running
+        let whisperSegmentActive = false; // currently capturing a speech segment
+
+        // VAD (Voice Activity Detection) config
+        const VAD_SPEECH_THRESHOLD = 12;   // RMS above this = speech detected
+        const VAD_SILENCE_TIMEOUT = 1500;  // ms of silence before auto-sending segment
+        const VAD_MIN_SEGMENT_MS = 300;    // ignore segments shorter than this
+        const VAD_POLL_INTERVAL = 60;      // ms between VAD checks
+        let vadSilenceTimer = null;
+        let vadPollTimer = null;
+        let segmentStartTime = 0;
+
+        // Audio playback state
+        let audioContext = null;
+        let audioQueue = [];
+        let isPlaying = false;
+        let currentAudioSource = null;
+        let currentAudioElement = null;
+
+        // Analyser (shared between viz and VAD)
+        let analyserNode = null;
+        let analyserSource = null;
+        let vizAnimFrame = null;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        // ── Helpers ─────────────────────────────────────────────────────────
+        function log(msg) {
+            const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
+            logEl.textContent += `[${ts}] ${msg}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function setStatus(text, state) {
+            statusEl.innerHTML = `<span class="status-dot ${state}"></span>${text}`;
+        }
+
+        function setBadge(text, cls) {
+            streamBadge.textContent = text;
+            streamBadge.className = `badge ${cls}`;
+        }
+
+        function setConnectedUI(on) {
+            connected = on;
+            connectBtn.disabled = on;
+            disconnectBtn.disabled = !on;
+            startMicBtn.disabled = !on;
+            stopMicBtn.disabled = true;
+            interruptBtn.disabled = !on;
+            textInput.disabled = !on;
+            sendTextBtn.disabled = !on;
+        }
+
+        function getInputMode() {
+            return inputModeEl.value;
+        }
+
+        function isAssistantSpeaking() {
+            return isPlaying || audioQueue.length > 0;
+        }
+
+        // ── Auto barge-in: interrupt assistant when user starts talking ─────
+        function autoBargeIn() {
+            if (!isAssistantSpeaking()) return;
+            stopAudioPlayback();
+            if (ws && connected) {
+                ws.send(JSON.stringify({ type: "interrupt", reason: "user_speaking" }));
+                log("⚡ Auto-interrupt: user started speaking");
+            }
+        }
+
+        // ── AudioContext playback ───────────────────────────────────────────
+        function getAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === "suspended") {
+                audioContext.resume();
+            }
+            return audioContext;
+        }
+
+        async function playNextAudioChunk() {
+            if (isPlaying || audioQueue.length === 0) return;
+            isPlaying = true;
+            setStatus("Playing audio...", "speaking");
+
+            const { bytes, format } = audioQueue.shift();
+
+            try {
+                const ctx = getAudioContext();
+                const arrayBuffer = bytes.buffer.slice(
+                    bytes.byteOffset,
+                    bytes.byteOffset + bytes.byteLength
+                );
+
+                try {
+                    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+                    await new Promise((resolve) => {
+                        const source = ctx.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(ctx.destination);
+                        currentAudioSource = source;
+                        source.onended = resolve;
+                        source.start(0);
+                    });
+                    currentAudioSource = null;
+                } catch (_decodeErr) {
+                    const mime = format === "mp3" ? "audio/mpeg" : `audio/${format}`;
+                    const blob = new Blob([bytes], { type: mime });
+                    const url = URL.createObjectURL(blob);
+                    const audio = new Audio(url);
+                    currentAudioElement = audio;
+                    await audio.play();
+                    await new Promise((resolve) => {
+                        audio.onended = resolve;
+                        audio.onerror = resolve;
+                    });
+                    currentAudioElement = null;
+                    URL.revokeObjectURL(url);
+                }
+            } catch (err) {
+                log(`Audio play error: ${err?.message || err}`);
+            } finally {
+                isPlaying = false;
+                if (audioQueue.length > 0) {
+                    playNextAudioChunk();
+                } else if (connected) {
+                    setStatus(whisperListening || micShouldRun ? "Listening..." : "Connected", whisperListening || micShouldRun ? "listening" : "connected");
+                }
+            }
+        }
+
+        function stopAudioPlayback() {
+            if (currentAudioSource) {
+                try { currentAudioSource.stop(); } catch (_) { }
+                currentAudioSource = null;
+            }
+            if (currentAudioElement) {
+                try { currentAudioElement.pause(); currentAudioElement.src = ""; } catch (_) { }
+                currentAudioElement = null;
+            }
+            audioQueue = [];
+            isPlaying = false;
+        }
+
+        function decodeBase64ToBytes(base64) {
+            const binary = atob(base64);
+            const len = binary.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        }
+
+        // ── RMS audio level from analyser ───────────────────────────────────
+        function getCurrentRMS() {
+            if (!analyserNode) return 0;
+            const data = new Uint8Array(analyserNode.frequencyBinCount);
+            analyserNode.getByteFrequencyData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) sum += data[i];
+            return sum / data.length;
+        }
+
+        // ── Shared analyser setup ───────────────────────────────────────────
+        function setupAnalyser(stream) {
+            try {
+                const ctx = getAudioContext();
+                analyserSource = ctx.createMediaStreamSource(stream);
+                analyserNode = ctx.createAnalyser();
+                analyserNode.fftSize = 256;
+                analyserSource.connect(analyserNode);
+            } catch (_) { }
+        }
+
+        function teardownAnalyser() {
+            if (analyserSource) {
+                try { analyserSource.disconnect(); } catch (_) { }
+                analyserSource = null;
+            }
+            analyserNode = null;
+        }
+
+        // ── Audio level visualization ───────────────────────────────────────
+        function startViz() {
+            function update() {
+                if (!whisperListening && !micShouldRun) {
+                    audioVizBar.style.width = "0%";
+                    return;
+                }
+                const rms = getCurrentRMS();
+                const pct = Math.min(100, (rms / 128) * 100);
+                audioVizBar.style.width = `${pct}%`;
+                vizAnimFrame = requestAnimationFrame(update);
+            }
+            update();
+        }
+
+        function stopViz() {
+            if (vizAnimFrame) { cancelAnimationFrame(vizAnimFrame); vizAnimFrame = null; }
+            audioVizBar.style.width = "0%";
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // ── Browser Speech Recognition (STT) with auto barge-in ─────────────
+        // ══════════════════════════════════════════════════════════════════════
+        function initBrowserRecognition() {
+            if (recognition || !SpeechRecognition) return;
+
+            recognition = new SpeechRecognition();
+            recognition.lang = "en-US";
+            recognition.interimResults = true;
+            recognition.continuous = true;
+            recognition.maxAlternatives = 1;
+
+            recognition.onstart = () => {
+                setStatus("Listening (browser STT)...", "listening");
+                startMicBtn.disabled = true;
+                stopMicBtn.disabled = false;
+                log("Browser STT started");
+            };
+
+            recognition.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const text = event.results[i][0].transcript.trim();
+                    if (!text) continue;
+
+                    if (event.results[i].isFinal) {
+                        // Auto barge-in on final transcript
+                        autoBargeIn();
+
+                        transcriptEl.textContent = text;
+                        resetOutputPanels();
+
+                        if (ws && connected) {
+                            ws.send(JSON.stringify({ type: "transcript", text }));
+                            log(`→ Sent transcript: ${text}`);
+                        }
+                    } else {
+                        // Auto barge-in as soon as interim speech is detected
+                        autoBargeIn();
+                        transcriptEl.textContent = text + " …";
+                    }
+                }
+            };
+
+            recognition.onerror = (event) => {
+                log(`Browser STT error: ${event.error}`);
+                if (["not-allowed", "service-not-allowed", "audio-capture"].includes(event.error)) {
+                    micShouldRun = false;
+                    stopMicBtn.disabled = true;
+                    startMicBtn.disabled = !connected;
+                    setStatus("Mic permission error", "disconnected");
+                }
+            };
+
+            recognition.onend = () => {
+                if (micShouldRun && connected) {
+                    setStatus("Listening (restarting)...", "listening");
+                    micRestartTimer = setTimeout(() => {
+                        try { recognition.start(); } catch { }
+                    }, 250);
+                    return;
+                }
+                stopMicBtn.disabled = true;
+                startMicBtn.disabled = !connected;
+                if (connected) setStatus("Connected", "connected");
+                log("Browser STT stopped");
+            };
+        }
+
+        function startBrowserSTT() {
+            if (!SpeechRecognition) {
+                alert("Web Speech API not supported. Use Chrome/Edge or switch to Server Whisper mode.");
+                return;
+            }
+            initBrowserRecognition();
+            micShouldRun = true;
+            stopMicBtn.disabled = false;
+            startMicBtn.disabled = true;
+            try { recognition.start(); } catch { }
+        }
+
+        function stopBrowserSTT() {
+            micShouldRun = false;
+            if (micRestartTimer) clearTimeout(micRestartTimer);
+            if (recognition) recognition.stop();
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // ── Server-side Whisper with VAD auto-segmentation & auto barge-in ──
+        // ══════════════════════════════════════════════════════════════════════
+
+        /**
+         * Opens the mic and starts VAD polling.
+         * The mic stays open until user clicks Stop.
+         * Speech segments are detected/sent automatically.
+         */
+        async function startWhisperListening() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                    }
+                });
+            } catch (err) {
+                log(`Mic permission failed: ${err?.message || err}`);
+                setStatus("Mic permission denied", "disconnected");
+                return;
+            }
+
+            whisperListening = true;
+            startMicBtn.disabled = true;
+            stopMicBtn.disabled = false;
+
+            setupAnalyser(mediaStream);
+            startViz();
+            startVADPolling();
+
+            setStatus("Listening (Whisper VAD)...", "listening");
+            log("Whisper VAD listening started — speak and it will auto-detect");
+        }
+
+        function stopWhisperListening() {
+            whisperListening = false;
+
+            // Stop VAD
+            stopVADPolling();
+
+            // If a segment is active, finish and send it
+            if (whisperSegmentActive) {
+                finishWhisperSegment();
+            }
+
+            // Release mic
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(t => t.stop());
+                mediaStream = null;
+            }
+
+            teardownAnalyser();
+            stopViz();
+
+            startMicBtn.disabled = !connected;
+            stopMicBtn.disabled = true;
+            if (connected) setStatus("Connected", "connected");
+            log("Whisper VAD listening stopped");
+        }
+
+        /** Start polling the analyser for voice activity */
+        function startVADPolling() {
+            stopVADPolling();
+            vadPollTimer = setInterval(vadCheck, VAD_POLL_INTERVAL);
+        }
+
+        function stopVADPolling() {
+            if (vadPollTimer) { clearInterval(vadPollTimer); vadPollTimer = null; }
+            if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
+        }
+
+        /** Core VAD logic — runs every VAD_POLL_INTERVAL ms */
+        function vadCheck() {
+            if (!whisperListening) return;
+
+            const rms = getCurrentRMS();
+            const isSpeech = rms > VAD_SPEECH_THRESHOLD;
+
+            if (isSpeech) {
+                // ── Speech detected ──
+                // Auto barge-in: if assistant is speaking, interrupt it
+                autoBargeIn();
+
+                if (!whisperSegmentActive) {
+                    // Start a new recording segment
+                    beginWhisperSegment();
+                }
+
+                // Reset silence timer — user is still talking
+                if (vadSilenceTimer) {
+                    clearTimeout(vadSilenceTimer);
+                    vadSilenceTimer = null;
+                }
+            } else if (whisperSegmentActive && !vadSilenceTimer) {
+                // ── Silence while recording → start countdown ──
+                vadSilenceTimer = setTimeout(() => {
+                    vadSilenceTimer = null;
+                    if (whisperSegmentActive) {
+                        finishWhisperSegment();
+                    }
+                }, VAD_SILENCE_TIMEOUT);
+            }
+        }
+
+        /** Begin recording a new speech segment */
+        function beginWhisperSegment() {
+            if (!mediaStream || whisperSegmentActive) return;
+
+            audioChunks = [];
+            whisperSegmentActive = true;
+            segmentStartTime = Date.now();
+
+            const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+                ? "audio/webm;codecs=opus"
+                : MediaRecorder.isTypeSupported("audio/mp4")
+                    ? "audio/mp4"
+                    : "audio/webm";
+
+            mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) audioChunks.push(event.data);
+            };
+
+            mediaRecorder.start(200);
+            setStatus("Speaking... (Whisper VAD)", "listening");
+            log("🎙️ Speech detected — recording segment");
+        }
+
+        /** Stop the current segment, encode, and send to server */
+        function finishWhisperSegment() {
+            if (!whisperSegmentActive || !mediaRecorder) return;
+
+            whisperSegmentActive = false;
+            const duration = Date.now() - segmentStartTime;
+
+            // Stop will trigger ondataavailable one last time then we process
+            mediaRecorder.onstop = async () => {
+                if (audioChunks.length === 0) return;
+
+                // Ignore very short segments (clicks, pops)
+                if (duration < VAD_MIN_SEGMENT_MS) {
+                    log(`Ignored short segment (${duration}ms)`);
+                    audioChunks = [];
+                    return;
+                }
+
+                const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+                audioChunks = [];
+
+                const arrayBuffer = await blob.arrayBuffer();
+                const uint8 = new Uint8Array(arrayBuffer);
+
+                // Base64 encode in chunks to avoid stack overflow
+                let binary = "";
+                const chunkSize = 8192;
+                for (let i = 0; i < uint8.length; i += chunkSize) {
+                    const slice = uint8.subarray(i, Math.min(i + chunkSize, uint8.length));
+                    binary += String.fromCharCode.apply(null, slice);
+                }
+                const base64 = btoa(binary);
+
+                resetOutputPanels();
+
+                if (ws && connected) {
+                    ws.send(JSON.stringify({ type: "audio", data: base64 }));
+                    log(`→ Sent audio segment (${(uint8.length / 1024).toFixed(1)} KB, ${duration}ms) for Whisper`);
+                    transcriptEl.textContent = "🎙️ Transcribing audio...";
+                }
+            };
+
+            try {
+                mediaRecorder.stop();
+            } catch (_) { }
+
+            if (whisperListening) {
+                setStatus("Listening (Whisper VAD)...", "listening");
+            }
+        }
+
+        // ── Unified Mic Controls ────────────────────────────────────────────
+        async function startMic() {
+            const mode = getInputMode();
+            if (mode === "browser-stt") {
+                startBrowserSTT();
+            } else {
+                await startWhisperListening();
+            }
+        }
+
+        function stopMic() {
+            const mode = getInputMode();
+            if (mode === "browser-stt") {
+                stopBrowserSTT();
+            } else {
+                stopWhisperListening();
+            }
+        }
+
+        function resetOutputPanels() {
+            assistantEl.textContent = "";
+            reasoningEl.textContent = "";
+            reasoningSection.classList.add("hidden");
+            toolsEl.innerHTML = "";
+            toolsSection.classList.add("hidden");
+            setBadge("idle", "idle");
+        }
+
+        // ── Text Input ──────────────────────────────────────────────────────
+        function sendTextMessage() {
+            const text = textInput.value.trim();
+            if (!text || !ws || !connected) return;
+
+            autoBargeIn(); // interrupt if assistant is speaking
+            transcriptEl.textContent = text;
+            resetOutputPanels();
+
+            ws.send(JSON.stringify({ type: "transcript", text }));
+            log(`→ Sent text: ${text}`);
+            textInput.value = "";
+        }
+
+        // ── Server Message Handler ──────────────────────────────────────────
+        function handleServerMessage(msg) {
+            switch (msg.type) {
+                // ── Stream lifecycle ────────────────────
+                case "stream_start":
+                    assistantEl.textContent = "";
+                    setBadge("streaming", "streaming");
+                    log("⏳ Stream started");
+                    break;
+
+                case "stream_finish":
+                    log(`✓ Stream finished (reason: ${msg.finishReason || "unknown"})`);
+                    break;
+
+                case "stream_error":
+                    log(`❌ Stream error: ${msg.error || "unknown"}`);
+                    setBadge("error", "idle");
+                    break;
+
+                case "stream_abort":
+                    log(`⚠️ Stream aborted: ${msg.reason || "unknown"}`);
+                    setBadge("aborted", "idle");
+                    break;
+
+                // ── Step lifecycle ──────────────────────
+                case "step_start":
+                    log("  → Step start");
+                    break;
+
+                case "step_finish":
+                    log(`  → Step finish (${msg.finishReason || ""})`);
+                    break;
+
+                // ── Text streaming ─────────────────────
+                case "text_start":
+                    break;
+
+                case "text_delta":
+                    assistantEl.textContent += msg.text || "";
+                    break;
+
+                case "text_end":
+                    break;
+
+                // ── Reasoning streaming ────────────────
+                case "reasoning_start":
+                    reasoningSection.classList.remove("hidden");
+                    reasoningEl.textContent = "";
+                    break;
+
+                case "reasoning_delta":
+                    reasoningSection.classList.remove("hidden");
+                    reasoningEl.textContent += msg.text || "";
+                    break;
+
+                case "reasoning_end":
+                    break;
+
+                // ── Tool streaming ─────────────────────
+                case "tool_input_start":
+                    toolsSection.classList.remove("hidden");
+                    toolsEl.innerHTML += `<div><strong>🛠️ ${msg.toolName || ""}</strong> `;
+                    break;
+
+                case "tool_input_delta":
+                    break;
+
+                case "tool_input_end":
+                    toolsEl.innerHTML += `</div>`;
+                    break;
+
+                case "tool_call":
+                    toolsSection.classList.remove("hidden");
+                    toolsEl.innerHTML += `<div>📞 <strong>${msg.toolName}</strong>(${JSON.stringify(msg.input || {})})</div>`;
+                    log(`🛠️ Tool call: ${msg.toolName}`);
+                    break;
+
+                case "tool_result":
+                    toolsSection.classList.remove("hidden");
+                    toolsEl.innerHTML += `<div>✅ ${msg.toolName}: ${JSON.stringify(msg.result || {})}</div>`;
+                    log(`🛠️ Tool result: ${msg.toolName}`);
+                    break;
+
+                case "tool_error":
+                    toolsSection.classList.remove("hidden");
+                    toolsEl.innerHTML += `<div>❌ ${msg.toolName}: ${msg.error}</div>`;
+                    log(`🛠️ Tool error: ${msg.toolName} — ${msg.error}`);
+                    break;
+
+                // ── Speech streaming audio ─────────────
+                case "speech_stream_start":
+                    log("🔊 Speech stream started");
+                    setBadge("speaking", "streaming");
+                    break;
+
+                case "speech_stream_end":
+                    log("🔊 Speech stream ended");
+                    if (audioQueue.length === 0 && !isPlaying) {
+                        setBadge("idle", "idle");
+                    }
+                    break;
+
+                case "audio_chunk": {
+                    const bytes = decodeBase64ToBytes(msg.data);
+                    audioQueue.push({ bytes, format: msg.format || "mp3" });
+                    log(`🔊 Audio chunk #${msg.chunkId ?? "?"} (${bytes.length} bytes, ${msg.format || "mp3"})`);
+                    playNextAudioChunk();
+                    break;
+                }
+
+                // Full audio (non-streaming fallback)
+                case "audio": {
+                    const bytes = decodeBase64ToBytes(msg.data);
+                    audioQueue.push({ bytes, format: msg.format || "mp3" });
+                    log(`🔊 Full audio (${bytes.length} bytes)`);
+                    playNextAudioChunk();
+                    break;
+                }
+
+                // ── Speech interruption (barge-in) ─────
+                case "speech_interrupted":
+                    stopAudioPlayback();
+                    log(`⏸️ Speech interrupted: ${msg.reason || "unknown"}`);
+                    setBadge("interrupted", "idle");
+                    if (connected) {
+                        setStatus(whisperListening || micShouldRun ? "Listening..." : "Connected",
+                                  whisperListening || micShouldRun ? "listening" : "connected");
+                    }
+                    break;
+
+                // ── Response complete ──────────────────
+                case "response_complete":
+                    setBadge("done", "idle");
+                    log(`✅ Response complete (${(msg.text || "").length} chars)`);
+                    break;
+
+                // ── Sources / files ────────────────────
+                case "source":
+                    log(`📎 Source: ${JSON.stringify(msg.source || {})}`);
+                    break;
+
+                case "file":
+                    log(`📄 File received`);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        // ── WebSocket Connection ────────────────────────────────────────────
+        function connect() {
+            const endpoint = endpointEl.value.trim();
+            if (!endpoint) return;
+
+            setStatus("Connecting...", "disconnected");
+            ws = new WebSocket(endpoint);
+
+            ws.onopen = () => {
+                setStatus("Connected", "connected");
+                setConnectedUI(true);
+                log(`✓ Connected to ${endpoint}`);
+            };
+
+            ws.onclose = () => {
+                setStatus("Disconnected", "disconnected");
+                setConnectedUI(false);
+                stopMic();
+                stopAudioPlayback();
+                log("✗ Disconnected");
+            };
+
+            ws.onerror = () => {
+                log("❌ WebSocket error");
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleServerMessage(msg);
+                } catch {
+                    log("Received non-JSON message");
+                }
+            };
+        }
+
+        function disconnect() {
+            stopMic();
+            stopAudioPlayback();
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function interrupt() {
+            if (!ws || !connected) return;
+            stopAudioPlayback();
+            ws.send(JSON.stringify({ type: "interrupt", reason: "user_clicked_interrupt" }));
+            log("→ Sent interrupt");
+        }
+
+        // ── Event Listeners ─────────────────────────────────────────────────
+        connectBtn.addEventListener("click", connect);
+        disconnectBtn.addEventListener("click", disconnect);
+        startMicBtn.addEventListener("click", startMic);
+        stopMicBtn.addEventListener("click", stopMic);
+        interruptBtn.addEventListener("click", interrupt);
+        sendTextBtn.addEventListener("click", sendTextMessage);
+
+        textInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendTextMessage();
+            }
+        });
+
+        // Warn about unsupported features
+        if (!SpeechRecognition) {
+            log("⚠️ Web Speech API unavailable — use Server Whisper mode or Chrome/Edge.");
+            inputModeEl.value = "server-whisper";
+        }
+        if (!window.isSecureContext && location.hostname !== "localhost") {
+            log("⚠️ Mic may fail on non-secure origins. Use HTTPS or localhost.");
+        }
+    </script>
+</body>
+
+</html>

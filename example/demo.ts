@@ -43,6 +43,13 @@ Use tools when needed to provide accurate information.`,
     voice: "alloy", // Options: alloy, echo, fable, onyx, nova, shimmer
     speechInstructions: "Speak in a friendly, natural conversational tone.",
     outputFormat: "mp3",
+    // Streaming speech tuning
+    streamingSpeech: {
+        minChunkSize: 40,
+        maxChunkSize: 180,
+        parallelGeneration: true,
+        maxParallelRequests: 2,
+    },
     // WebSocket endpoint
     endpoint: process.env.VOICE_WS_ENDPOINT,
     // Tools
@@ -70,13 +77,13 @@ agent.on("text", (msg: { role: string; text: string }) => {
 });
 
 // Streaming text delta events (real-time text chunks)
-agent.on("text_delta", ({ text }: { text: string }) => {
+agent.on("chunk:text_delta", ({ text }: { text: string }) => {
     process.stdout.write(text);
 });
 
-// Tool events
-agent.on("tool_start", ({ name, input }: { name: string; input?: unknown }) => {
-    console.log(`\n[Tool] Calling ${name}...`, input ? JSON.stringify(input) : "");
+// Tool events (stream-level)
+agent.on("chunk:tool_call", ({ toolName, input }: { toolName: string; input: unknown }) => {
+    console.log(`\n[Tool] Calling ${toolName}...`, input ? JSON.stringify(input) : "");
 });
 
 agent.on("tool_result", ({ name, result }: { name: string; result: unknown }) => {
@@ -84,19 +91,51 @@ agent.on("tool_result", ({ name, result }: { name: string; result: unknown }) =>
 });
 
 // Speech events
-agent.on("speech_start", ({ text }: { text: string }) => {
-    console.log(`[TTS] Generating speech for: "${text.substring(0, 50)}..."`);
+agent.on("speech_start", ({ streaming }: { streaming: boolean }) => {
+    console.log(`[TTS] Speech started (streaming=${streaming})`);
 });
 
 agent.on("speech_complete", () => {
     console.log("[TTS] Speech generation complete");
 });
 
-// Audio events (when TTS audio is generated)
+agent.on("speech_chunk_queued", ({ id, text }: { id: number; text: string }) => {
+    console.log(`[TTS] Queued chunk #${id}: ${text.substring(0, 40)}...`);
+});
+
+// Streaming audio chunk events
+agent.on(
+    "audio_chunk",
+    async ({ chunkId, format, uint8Array }: { chunkId: number; format: string; uint8Array: Uint8Array }) => {
+        console.log(`[Audio] Chunk #${chunkId} (${uint8Array.length} bytes, ${format})`);
+        await writeFile(`output_chunk_${chunkId}.${format}`, Buffer.from(uint8Array));
+    },
+);
+
+// Full audio event (non-streaming fallback via generateAndSendSpeechFull)
 agent.on("audio", async (audio: { data: string; format: string; uint8Array: Uint8Array }) => {
-    console.log(`[Audio] Received ${audio.format} audio (${audio.uint8Array.length} bytes)`);
-    // Optionally save to file for testing
-    await writeFile(`output.${audio.format}`, Buffer.from(audio.uint8Array));
+    console.log(`[Audio] Full response audio (${audio.uint8Array.length} bytes, ${audio.format})`);
+    await writeFile(`output_full.${audio.format}`, Buffer.from(audio.uint8Array));
+});
+
+// Speech interruption (barge-in)
+agent.on("speech_interrupted", ({ reason }: { reason: string }) => {
+    console.log(`[TTS] Speech interrupted: ${reason}`);
+});
+
+// Transcription event (when server-side Whisper is used)
+agent.on("transcription", ({ text, language }: { text: string; language?: string }) => {
+    console.log(`[STT] Transcription (${language || "unknown"}): ${text}`);
+});
+
+// Audio received event
+agent.on("audio_received", ({ size }: { size: number }) => {
+    console.log(`[Audio] Received ${(size / 1024).toFixed(1)} KB of audio input`);
+});
+
+// Warning events
+agent.on("warning", (msg: string) => {
+    console.warn(`[Warning] ${msg}`);
 });
 
 // Error handling
@@ -111,20 +150,9 @@ agent.on("error", (error: Error) => {
 
     try {
         // Test 1: Simple text query with streaming
-        console.log("--- Test 1: Weather Query ---");
-        const response1 = await agent.sendText("What is the weather in Berlin?");
+        console.log("--- Test 1: Text Query ---");
+        await agent.sendText("What's the weather in San Francisco?");
         console.log("\n");
-
-        // Test 2: Multi-turn conversation
-        console.log("--- Test 2: Follow-up Question ---");
-        const response2 = await agent.sendText("What about Tokyo?");
-        console.log("\n");
-
-        // Test 3: Time query
-        console.log("--- Test 3: Time Query ---");
-        const response3 = await agent.sendText("What time is it?");
-        console.log("\n");
-
         // Show conversation history
         console.log("--- Conversation History ---");
         const history = agent.getHistory();

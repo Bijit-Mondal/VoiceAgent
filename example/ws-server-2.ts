@@ -96,26 +96,6 @@ Use tools when needed to provide accurate information.`,
         console.log(`[ws-server] 🔊 Audio chunk #${chunkId}: ${uint8Array.length} bytes (${format})`);
     });
 
-    agent.on("transcription", ({ text, language }: { text: string; language?: string }) => {
-        console.log(`[ws-server] 📝 Transcription (${language || "unknown"}): ${text}`);
-    });
-
-    agent.on("audio_received", ({ size }: { size: number }) => {
-        console.log(`[ws-server] 🎤 Audio received: ${(size / 1024).toFixed(1)} KB`);
-    });
-
-    agent.on("chunk:reasoning_delta", ({ text }: { text: string }) => {
-        process.stdout.write(text);
-    });
-
-    agent.on("warning", (msg: string) => {
-        console.log(`[ws-server] ⚠️  Warning: ${msg}`);
-    });
-
-    agent.on("speech_chunk_queued", ({ id, text }: { id: number; text: string }) => {
-        console.log(`[ws-server] 🔊 Queued speech chunk #${id}: ${text.substring(0, 50)}...`);
-    });
-
     agent.on("error", (err: Error) => console.error("[ws-server] ❌ Error:", err.message));
 
     agent.on("disconnected", () => {

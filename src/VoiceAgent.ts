@@ -12,6 +12,29 @@ import {
   type SpeechModel,
 } from "ai";
 
+/**
+ * Represents a chunk of text to be converted to speech
+ */
+interface SpeechChunk {
+  id: number;
+  text: string;
+  audioPromise?: Promise<Uint8Array | null>;
+}
+
+/**
+ * Configuration for streaming speech behavior
+ */
+interface StreamingSpeechConfig {
+  /** Minimum characters before generating speech for a chunk */
+  minChunkSize: number;
+  /** Maximum characters per chunk (will split at sentence boundary before this) */
+  maxChunkSize: number;
+  /** Whether to enable parallel TTS generation */
+  parallelGeneration: boolean;
+  /** Maximum number of parallel TTS requests */
+  maxParallelRequests: number;
+}
+
 export interface VoiceAgentOptions {
   model: LanguageModel; // AI SDK Model for chat (e.g., openai('gpt-4o'))
   transcriptionModel?: TranscriptionModel; // AI SDK Transcription Model (e.g., openai.transcription('whisper-1'))
@@ -23,6 +46,8 @@ export interface VoiceAgentOptions {
   voice?: string; // Voice for TTS (e.g., 'alloy', 'echo', 'shimmer')
   speechInstructions?: string; // Instructions for TTS voice style
   outputFormat?: string; // Audio output format (e.g., 'mp3', 'opus', 'wav')
+  /** Configuration for streaming speech generation */
+  streamingSpeech?: Partial<StreamingSpeechConfig>;
 }
 
 export class VoiceAgent extends EventEmitter {
@@ -41,6 +66,14 @@ export class VoiceAgent extends EventEmitter {
   private outputFormat: string;
   private isProcessing = false;
 
+  // Streaming speech state
+  private streamingSpeechConfig: StreamingSpeechConfig;
+  private currentSpeechAbortController?: AbortController;
+  private speechChunkQueue: SpeechChunk[] = [];
+  private nextChunkId = 0;
+  private isSpeaking = false;
+  private pendingTextBuffer = "";
+
   constructor(options: VoiceAgentOptions) {
     super();
     this.model = options.model;
@@ -56,6 +89,15 @@ export class VoiceAgent extends EventEmitter {
     if (options.tools) {
       this.tools = { ...options.tools };
     }
+
+    // Initialize streaming speech config with defaults
+    this.streamingSpeechConfig = {
+      minChunkSize: 50,
+      maxChunkSize: 200,
+      parallelGeneration: true,
+      maxParallelRequests: 3,
+      ...options.streamingSpeech,
+    };
   }
 
   private setupListeners() {
@@ -67,11 +109,23 @@ export class VoiceAgent extends EventEmitter {
 
         // Handle transcribed text from the client/STT
         if (message.type === "transcript") {
+          // Interrupt ongoing speech when user starts speaking (barge-in)
+          if (this.isSpeaking) {
+            this.interruptSpeech("user_speaking");
+          }
           await this.processUserInput(message.text);
         }
         // Handle raw audio data that needs transcription
         if (message.type === "audio") {
+          // Interrupt ongoing speech when user starts speaking (barge-in)
+          if (this.isSpeaking) {
+            this.interruptSpeech("user_speaking");
+          }
           await this.processAudioInput(message.data);
+        }
+        // Handle explicit interrupt request from client
+        if (message.type === "interrupt") {
+          this.interruptSpeech(message.reason || "client_request");
         }
       } catch (err) {
         console.error("Failed to process message:", err);
@@ -118,8 +172,12 @@ export class VoiceAgent extends EventEmitter {
 
   /**
    * Generate speech from text using the configured speech model
+   * @param abortSignal Optional signal to cancel the speech generation
    */
-  public async generateSpeechFromText(text: string): Promise<Uint8Array> {
+  public async generateSpeechFromText(
+    text: string,
+    abortSignal?: AbortSignal
+  ): Promise<Uint8Array> {
     if (!this.speechModel) {
       throw new Error("Speech model not configured");
     }
@@ -130,9 +188,244 @@ export class VoiceAgent extends EventEmitter {
       voice: this.voice,
       instructions: this.speechInstructions,
       outputFormat: this.outputFormat,
+      abortSignal,
     });
 
     return result.audio.uint8Array;
+  }
+
+  /**
+   * Interrupt ongoing speech generation and playback (barge-in support)
+   */
+  public interruptSpeech(reason: string = "interrupted"): void {
+    if (!this.isSpeaking && this.speechChunkQueue.length === 0) {
+      return;
+    }
+
+    // Abort any pending speech generation requests
+    if (this.currentSpeechAbortController) {
+      this.currentSpeechAbortController.abort();
+      this.currentSpeechAbortController = undefined;
+    }
+
+    // Clear the speech queue
+    this.speechChunkQueue = [];
+    this.pendingTextBuffer = "";
+    this.isSpeaking = false;
+
+    // Notify clients to stop audio playback
+    this.sendWebSocketMessage({
+      type: "speech_interrupted",
+      reason,
+    });
+
+    this.emit("speech_interrupted", { reason });
+  }
+
+  /**
+   * Extract complete sentences from text buffer
+   * Returns [extractedSentences, remainingBuffer]
+   */
+  private extractSentences(text: string): [string[], string] {
+    const sentences: string[] = [];
+    let remaining = text;
+
+    // Match sentences ending with . ! ? followed by space or end of string
+    // Also handles common abbreviations and edge cases
+    const sentenceEndPattern = /[.!?]+(?:\s+|$)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = sentenceEndPattern.exec(text)) !== null) {
+      const sentence = text.slice(lastIndex, match.index + match[0].length).trim();
+      if (sentence.length >= this.streamingSpeechConfig.minChunkSize) {
+        sentences.push(sentence);
+        lastIndex = match.index + match[0].length;
+      } else if (sentences.length > 0) {
+        // Append short sentence to previous one
+        sentences[sentences.length - 1] += " " + sentence;
+        lastIndex = match.index + match[0].length;
+      }
+    }
+
+    remaining = text.slice(lastIndex);
+
+    // If remaining text is too long, force split at clause boundaries
+    if (remaining.length > this.streamingSpeechConfig.maxChunkSize) {
+      const clausePattern = /[,;:]\s+/g;
+      let clauseMatch;
+      let splitIndex = 0;
+
+      while ((clauseMatch = clausePattern.exec(remaining)) !== null) {
+        if (clauseMatch.index >= this.streamingSpeechConfig.minChunkSize) {
+          splitIndex = clauseMatch.index + clauseMatch[0].length;
+          break;
+        }
+      }
+
+      if (splitIndex > 0) {
+        sentences.push(remaining.slice(0, splitIndex).trim());
+        remaining = remaining.slice(splitIndex);
+      }
+    }
+
+    return [sentences, remaining];
+  }
+
+  /**
+   * Queue a text chunk for speech generation
+   */
+  private queueSpeechChunk(text: string): void {
+    if (!this.speechModel || !text.trim()) return;
+
+    const chunk: SpeechChunk = {
+      id: this.nextChunkId++,
+      text: text.trim(),
+    };
+
+    // Start generating audio immediately (parallel generation)
+    if (this.streamingSpeechConfig.parallelGeneration) {
+      const activeRequests = this.speechChunkQueue.filter(c => c.audioPromise).length;
+
+      if (activeRequests < this.streamingSpeechConfig.maxParallelRequests) {
+        chunk.audioPromise = this.generateChunkAudio(chunk);
+      }
+    }
+
+    this.speechChunkQueue.push(chunk);
+    this.emit("speech_chunk_queued", { id: chunk.id, text: chunk.text });
+
+    // Start processing queue if not already
+    if (!this.isSpeaking) {
+      this.processSpeechQueue();
+    }
+  }
+
+  /**
+   * Generate audio for a single chunk
+   */
+  private async generateChunkAudio(chunk: SpeechChunk): Promise<Uint8Array | null> {
+    if (!this.currentSpeechAbortController) {
+      this.currentSpeechAbortController = new AbortController();
+    }
+
+    try {
+      const audioData = await this.generateSpeechFromText(
+        chunk.text,
+        this.currentSpeechAbortController.signal
+      );
+      return audioData;
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        return null; // Cancelled, don't report as error
+      }
+      console.error(`Failed to generate audio for chunk ${chunk.id}:`, error);
+      this.emit("error", error);
+      return null;
+    }
+  }
+
+  /**
+   * Process the speech queue and send audio chunks in order
+   */
+  private async processSpeechQueue(): Promise<void> {
+    if (this.isSpeaking) return;
+    this.isSpeaking = true;
+
+    this.emit("speech_start", { streaming: true });
+    this.sendWebSocketMessage({ type: "speech_stream_start" });
+
+    try {
+      while (this.speechChunkQueue.length > 0) {
+        const chunk = this.speechChunkQueue[0];
+
+        // Ensure audio generation has started
+        if (!chunk.audioPromise) {
+          chunk.audioPromise = this.generateChunkAudio(chunk);
+        }
+
+        // Wait for this chunk's audio
+        const audioData = await chunk.audioPromise;
+
+        // Check if we were interrupted while waiting
+        if (!this.isSpeaking) break;
+
+        // Remove from queue after processing
+        this.speechChunkQueue.shift();
+
+        if (audioData) {
+          const base64Audio = Buffer.from(audioData).toString("base64");
+
+          // Send audio chunk via WebSocket
+          this.sendWebSocketMessage({
+            type: "audio_chunk",
+            chunkId: chunk.id,
+            data: base64Audio,
+            format: this.outputFormat,
+            text: chunk.text,
+          });
+
+          // Emit for local handling
+          this.emit("audio_chunk", {
+            chunkId: chunk.id,
+            data: base64Audio,
+            format: this.outputFormat,
+            text: chunk.text,
+            uint8Array: audioData,
+          });
+        }
+
+        // Start generating next chunks in parallel
+        if (this.streamingSpeechConfig.parallelGeneration) {
+          const activeRequests = this.speechChunkQueue.filter(c => c.audioPromise).length;
+          const toStart = Math.min(
+            this.streamingSpeechConfig.maxParallelRequests - activeRequests,
+            this.speechChunkQueue.length
+          );
+
+          for (let i = 0; i < toStart; i++) {
+            const nextChunk = this.speechChunkQueue.find(c => !c.audioPromise);
+            if (nextChunk) {
+              nextChunk.audioPromise = this.generateChunkAudio(nextChunk);
+            }
+          }
+        }
+      }
+    } finally {
+      this.isSpeaking = false;
+      this.currentSpeechAbortController = undefined;
+
+      this.sendWebSocketMessage({ type: "speech_stream_end" });
+      this.emit("speech_complete", { streaming: true });
+    }
+  }
+
+  /**
+   * Process text deltra for streaming speech
+   * Call this as text chunks arrive from LLM
+   */
+  private processTextForStreamingSpeech(textDelta: string): void {
+    if (!this.speechModel) return;
+
+    this.pendingTextBuffer += textDelta;
+
+    const [sentences, remaining] = this.extractSentences(this.pendingTextBuffer);
+    this.pendingTextBuffer = remaining;
+
+    for (const sentence of sentences) {
+      this.queueSpeechChunk(sentence);
+    }
+  }
+
+  /**
+   * Flush any remaining text in the buffer to speech
+   * Call this when stream ends
+   */
+  private flushStreamingSpeech(): void {
+    if (!this.speechModel || !this.pendingTextBuffer.trim()) return;
+
+    this.queueSpeechChunk(this.pendingTextBuffer);
+    this.pendingTextBuffer = "";
   }
 
   /**
@@ -180,6 +473,18 @@ export class VoiceAgent extends EventEmitter {
         reject(error);
       }
     });
+  }
+
+  /**
+   * Attach an existing WebSocket (server-side usage).
+   * Use this when a WS server accepts a connection and you want the
+   * agent to handle messages on that socket.
+   */
+  public handleSocket(socket: WebSocket): void {
+    this.socket = socket;
+    this.isConnected = true;
+    this.setupListeners();
+    this.emit("connected");
   }
 
   /**
@@ -366,6 +671,8 @@ export class VoiceAgent extends EventEmitter {
 
           case "text-delta":
             fullText += part.text;
+            // Process text for streaming speech as it arrives
+            this.processTextForStreamingSpeech(part.text);
             this.sendWebSocketMessage({
               type: "text_delta",
               id: part.id,
@@ -374,6 +681,8 @@ export class VoiceAgent extends EventEmitter {
             break;
 
           case "text-end":
+            // Flush any remaining text to speech when text stream ends
+            this.flushStreamingSpeech();
             this.sendWebSocketMessage({ type: "text_end", id: part.id });
             break;
 
@@ -478,9 +787,13 @@ export class VoiceAgent extends EventEmitter {
         this.conversationHistory.push({ role: "assistant", content: fullText });
       }
 
-      // Generate speech from the response if speech model is configured
-      if (this.speechModel && fullText) {
-        await this.generateAndSendSpeech(fullText);
+      // Ensure any remaining speech is flushed (in case text-end wasn't triggered)
+      this.flushStreamingSpeech();
+
+      // Wait for all speech chunks to complete before signaling response complete
+      // This ensures audio playback can finish
+      while (this.speechChunkQueue.length > 0 || this.isSpeaking) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
       // Send the complete response
@@ -501,13 +814,14 @@ export class VoiceAgent extends EventEmitter {
   }
 
   /**
-   * Generate speech and send audio via WebSocket
+   * Generate speech for full text at once (non-streaming fallback)
+   * Useful when you want to bypass streaming speech for short responses
    */
-  private async generateAndSendSpeech(text: string): Promise<void> {
+  public async generateAndSendSpeechFull(text: string): Promise<void> {
     if (!this.speechModel) return;
 
     try {
-      this.emit("speech_start", { text });
+      this.emit("speech_start", { text, streaming: false });
 
       const audioData = await this.generateSpeechFromText(text);
       const base64Audio = Buffer.from(audioData).toString("base64");
@@ -526,7 +840,7 @@ export class VoiceAgent extends EventEmitter {
         uint8Array: audioData,
       });
 
-      this.emit("speech_complete", { text });
+      this.emit("speech_complete", { text, streaming: false });
     } catch (error) {
       console.error("Failed to generate speech:", error);
       this.emit("error", error);
@@ -603,5 +917,19 @@ export class VoiceAgent extends EventEmitter {
    */
   get processing(): boolean {
     return this.isProcessing;
+  }
+
+  /**
+   * Check if agent is currently speaking (generating/playing audio)
+   */
+  get speaking(): boolean {
+    return this.isSpeaking;
+  }
+
+  /**
+   * Get the number of pending speech chunks in the queue
+   */
+  get pendingSpeechChunks(): number {
+    return this.speechChunkQueue.length;
   }
 }
