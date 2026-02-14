@@ -1,5 +1,7 @@
 # voice-agent-ai-sdk
 
+[![npm version](https://badge.fury.io/js/voice-agent-ai-sdk.svg)](https://www.npmjs.com/package/voice-agent-ai-sdk)
+
 Streaming voice/text agent SDK built on [AI SDK](https://sdk.vercel.ai/) with optional WebSocket transport.
 
 ## Features

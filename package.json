@@ -2,7 +2,13 @@
   "name": "voice-agent-ai-sdk",
   "version": "0.1.0",
   "description": "Voice AI Agent with ai-sdk",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
@@ -16,23 +22,38 @@
     "websocket",
     "ai",
     "agent",
-    "tools"
+    "tools",
+    "tts",
+    "speech",
+    "ai-sdk",
+    "streaming"
   ],
   "author": "Bijit Mondal",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bijit-Mondal/voiceAgent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Bijit-Mondal/voiceAgent/issues"
+  },
+  "homepage": "https://github.com/Bijit-Mondal/voiceAgent#readme",
   "packageManager": "pnpm@10.27.0",
-  "devDependencies": {
-    "@ai-sdk/openai": "^3.0.28",
-    "@types/node": "^25.2.3",
-    "@types/ws": "^8.18.1",
-    "tsx": "^4.20.5",
-    "typescript": "^5.9.3"
+  "peerDependencies": {
+    "ai": "^6.0.0"
   },
   "dependencies": {
-    "ai": "^6.0.85",
     "dotenv": "^17.2.3",
     "ws": "^8.19.0",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.1"
+  },
+  "devDependencies": {
+    "@ai-sdk/openai": "^3.0.28",
+    "@types/node": "^25.2.3",
+    "@types/ws": "^8.18.1",
+    "ai": "^6.0.85",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
   }
 }
