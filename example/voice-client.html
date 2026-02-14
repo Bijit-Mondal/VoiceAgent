@@ -263,6 +263,8 @@
             <button id="disconnectBtn" disabled>Disconnect</button>
         </div>
         <div id="status"><span class="status-dot disconnected"></span>Disconnected</div>
+        <div style="font-size: 13px; color: #666; margin-top: 4px;">Debug: Check browser console (F12) for detailed logs
+        </div>
     </div>
 
     <!-- Input Controls -->
@@ -440,6 +442,7 @@
             setStatus("Playing audio...", "speaking");
 
             const { bytes, format } = audioQueue.shift();
+            console.log(`Playing audio chunk: ${bytes.length} bytes, format: ${format}`);
 
             try {
                 const ctx = getAudioContext();
@@ -449,7 +452,10 @@
                 );
 
                 try {
+                    console.log(`Attempting to decode audio with WebAudio API...`);
                     const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+                    console.log(`Decoded audio successfully: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels, ${audioBuffer.sampleRate}Hz`);
+
                     await new Promise((resolve) => {
                         const source = ctx.createBufferSource();
                         source.buffer = audioBuffer;
@@ -457,29 +463,49 @@
                         currentAudioSource = source;
                         source.onended = resolve;
                         source.start(0);
+                        console.log(`Audio playback started`);
                     });
+                    console.log(`Audio playback completed`);
                     currentAudioSource = null;
-                } catch (_decodeErr) {
+                } catch (decodeErr) {
+                    console.warn(`WebAudio decode failed, falling back to Audio element:`, decodeErr);
                     const mime = getMimeTypeForFormat(format);
+                    console.log(`Using MIME type: ${mime}`);
+
                     const blob = new Blob([bytes], { type: mime });
                     const url = URL.createObjectURL(blob);
                     const audio = new Audio(url);
+
+                    audio.onerror = (e) => console.error(`Audio element error:`, e);
+                    audio.oncanplaythrough = () => console.log(`Audio ready to play: ${audio.duration.toFixed(2)}s`);
+
                     currentAudioElement = audio;
                     await audio.play();
+                    console.log(`Audio element playback started`);
+
                     await new Promise((resolve) => {
-                        audio.onended = resolve;
-                        audio.onerror = resolve;
+                        audio.onended = () => {
+                            console.log(`Audio element playback completed`);
+                            resolve();
+                        };
+                        audio.onerror = (e) => {
+                            console.error(`Audio element playback failed:`, e);
+                            resolve();
+                        };
                     });
                     currentAudioElement = null;
                     URL.revokeObjectURL(url);
                 }
             } catch (err) {
+                console.error(`Audio playback error:`, err);
                 log(`Audio play error: ${err?.message || err}`);
             } finally {
                 isPlaying = false;
                 if (audioQueue.length > 0) {
+                    console.log(`${audioQueue.length} more audio chunks in queue, continuing playback`);
                     playNextAudioChunk();
                 } else if (connected) {
+                    console.log(`Audio queue empty, returning to ${whisperListening || micShouldRun ? 'listening' : 'connected'} state`);
                     setStatus(whisperListening || micShouldRun ? "Listening..." : "Connected", whisperListening || micShouldRun ? "listening" : "connected");
                 }
             }
@@ -521,6 +547,7 @@
                 case "webm":
                     return "audio/webm";
                 default:
+                    console.log(`Unknown audio format: ${format}, defaulting to mpeg`);
                     return `audio/${format || "mpeg"}`;
             }
         }
@@ -543,7 +570,10 @@
                 analyserNode = ctx.createAnalyser();
                 analyserNode.fftSize = 256;
                 analyserSource.connect(analyserNode);
-            } catch (_) { }
+                console.log('Audio analyser setup complete');
+            } catch (err) {
+                console.error('Audio analyser setup failed:', err);
+            }
         }
 
         function teardownAnalyser() {
@@ -671,15 +701,26 @@
          */
         async function startWhisperListening() {
             try {
+                console.log("Starting Whisper VAD listening");
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         channelCount: 1,
                         sampleRate: 16000,
                         echoCancellation: true,
                         noiseSuppression: true,
+                        autoGainControl: true
                     }
                 });
+
+                // Log the actual constraints we got
+                const tracks = mediaStream.getAudioTracks();
+                if (tracks.length > 0) {
+                    const settings = tracks[0].getSettings();
+                    console.log('Audio track settings:', settings);
+                    log(`🎵 Audio: ${settings.sampleRate}Hz, ${settings.channelCount}ch`);
+                }
             } catch (err) {
+                console.error("Mic permission error:", err);
                 log(`Mic permission failed: ${err?.message || err}`);
                 setStatus("Mic permission denied", "disconnected");
                 return;
@@ -808,13 +849,45 @@
             whisperSegmentActive = true;
             segmentStartTime = Date.now();
 
-            const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-                ? "audio/webm;codecs=opus"
-                : MediaRecorder.isTypeSupported("audio/mp4")
-                    ? "audio/mp4"
-                    : "audio/webm";
+            // Try to choose the best format for Whisper compatibility
+            let mimeType = '';
+            const supportedTypes = [
+                "audio/webm;codecs=opus",  // Best compatibility with Whisper
+                "audio/webm",
+                "audio/ogg;codecs=opus",
+                "audio/mp4",
+                "audio/wav"
+            ];
 
-            mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+            for (const type of supportedTypes) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    mimeType = type;
+                    break;
+                }
+            }
+
+            if (!mimeType) {
+                console.warn("No preferred MIME types supported, using default");
+                mimeType = ''; // Let the browser choose
+            }
+
+            console.log(`Using MediaRecorder with MIME type: ${mimeType || 'browser default'}`);
+
+            // Create recorder with bitrate suitable for speech
+            const recorderOptions = {
+                mimeType: mimeType,
+                audioBitsPerSecond: 128000 // 128kbps is good for speech
+            };
+
+            try {
+                mediaRecorder = new MediaRecorder(mediaStream, recorderOptions);
+                console.log(`MediaRecorder created with mimeType: ${mediaRecorder.mimeType}`);
+            } catch (err) {
+                console.error("MediaRecorder creation failed:", err);
+                // Fallback to default options
+                mediaRecorder = new MediaRecorder(mediaStream);
+                console.log(`Fallback MediaRecorder created with mimeType: ${mediaRecorder.mimeType}`);
+            }
 
             mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0) audioChunks.push(event.data);
@@ -843,27 +916,45 @@
                     return;
                 }
 
-                const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
-                audioChunks = [];
+                try {
+                    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+                    audioChunks = [];
 
-                const arrayBuffer = await blob.arrayBuffer();
-                const uint8 = new Uint8Array(arrayBuffer);
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const uint8 = new Uint8Array(arrayBuffer);
 
-                // Base64 encode in chunks to avoid stack overflow
-                let binary = "";
-                const chunkSize = 8192;
-                for (let i = 0; i < uint8.length; i += chunkSize) {
-                    const slice = uint8.subarray(i, Math.min(i + chunkSize, uint8.length));
-                    binary += String.fromCharCode.apply(null, slice);
-                }
-                const base64 = btoa(binary);
+                    // Base64 encode in chunks to avoid stack overflow
+                    let binary = "";
+                    const chunkSize = 8192;
+                    for (let i = 0; i < uint8.length; i += chunkSize) {
+                        const slice = uint8.subarray(i, Math.min(i + chunkSize, uint8.length));
+                        binary += String.fromCharCode.apply(null, slice);
+                    }
+                    const base64 = btoa(binary);
 
-                resetOutputPanels();
+                    // Log audio size for debugging
+                    console.log(`Prepared audio segment: ${(uint8.length / 1024).toFixed(1)}KB, duration: ${duration}ms, mime: ${mediaRecorder.mimeType}`);
 
-                if (ws && connected) {
-                    ws.send(JSON.stringify({ type: "audio", data: base64 }));
-                    log(`→ Sent audio segment (${(uint8.length / 1024).toFixed(1)} KB, ${duration}ms) for Whisper`);
-                    transcriptEl.textContent = "🎙️ Transcribing audio...";
+                    resetOutputPanels();
+
+                    if (ws && connected) {
+                        // Add format information to help server decode the audio
+                        const message = {
+                            type: "audio",
+                            data: base64,
+                            format: mediaRecorder.mimeType,
+                            sampleRate: 16000,  // Match the constraint we requested
+                            duration: duration
+                        };
+
+                        console.log(`Sending audio to server: ${(base64.length / 1000).toFixed(1)}KB, format: ${mediaRecorder.mimeType}`);
+                        ws.send(JSON.stringify(message));
+                        log(`→ Sent audio segment (${(uint8.length / 1024).toFixed(1)} KB, ${duration}ms) for Whisper`);
+                        transcriptEl.textContent = "🎙️ Transcribing audio...";
+                    }
+                } catch (err) {
+                    console.error("Error processing audio segment:", err);
+                    log(`❌ Error processing audio: ${err.message || err}`);
                 }
             };
 
@@ -921,6 +1012,18 @@
         // ── Server Message Handler ──────────────────────────────────────────
         function handleServerMessage(msg) {
             switch (msg.type) {
+                // ── Transcription feedback ────────────────
+                case "transcription_result":
+                    console.log(`Received transcription: "${msg.text}", language: ${msg.language || 'unknown'}`);
+                    transcriptEl.textContent = msg.text;
+                    log(`🎙️ Transcription: ${msg.text}`);
+                    break;
+
+                case "transcription_error":
+                    console.error(`Transcription error: ${msg.error}`);
+                    transcriptEl.textContent = `⚠️ ${msg.error}`;
+                    log(`❌ Transcription error: ${msg.error}`);
+                    break;
                 // ── Stream lifecycle ────────────────────
                 case "stream_start":
                     assistantEl.textContent = "";
@@ -1022,8 +1125,9 @@
 
                 case "audio_chunk": {
                     const bytes = decodeBase64ToBytes(msg.data);
-                    audioQueue.push({ bytes, format: msg.format || "opus" });
-                    log(`🔊 Audio chunk #${msg.chunkId ?? "?"} (${bytes.length} bytes, ${msg.format || "opus"})`);
+                    audioQueue.push({ bytes, format: msg.format || "mp3" });
+                    log(`🔊 Audio chunk #${msg.chunkId ?? "?"} (${bytes.length} bytes, ${msg.format || "mp3"})`);
+                    console.log(`Received audio chunk #${msg.chunkId ?? "?"}: ${bytes.length} bytes, format: ${msg.format || "mp3"}`);
                     playNextAudioChunk();
                     break;
                 }
@@ -1096,9 +1200,12 @@
 
             ws.onmessage = (event) => {
                 try {
+                    console.log(`← Received WebSocket message: ${event.data.length} bytes`);
                     const msg = JSON.parse(event.data);
+                    console.log('Message parsed:', msg.type);
                     handleServerMessage(msg);
-                } catch {
+                } catch (err) {
+                    console.error('Parse error:', err);
                     log("Received non-JSON message");
                 }
             };

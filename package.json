@@ -7,7 +7,8 @@
     "build": "tsc",
     "dev": "tsc -w",
     "demo": "tsx example/demo.ts",
-    "ws:server": "tsx example/ws-server-2.ts",
+    "ws:server": "tsx example/ws-server.ts",
+    "client": "node example/serve-client.js",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [

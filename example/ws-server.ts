@@ -40,6 +40,7 @@ const wss = new WebSocketServer({ port, host });
 wss.on("listening", () => {
     console.log(`[ws-server] listening on ${endpoint}`);
     console.log("[ws-server] Waiting for connections...\n");
+    console.log(`[ws-server] 🌐 Open voice-client.html in your browser and connect to ${endpoint}`);
 });
 
 wss.on("connection", (socket) => {
@@ -55,12 +56,12 @@ Keep responses concise and conversational since they will be spoken aloud.
 Use tools when needed to provide accurate information.`,
         voice: "alloy",
         speechInstructions: "Speak in a friendly, natural conversational tone.",
-        outputFormat: "opus",
+        outputFormat: "mp3",   // Using mp3 for better browser compatibility
         streamingSpeech: {
-            minChunkSize: 40,
-            maxChunkSize: 180,
-            parallelGeneration: true,
-            maxParallelRequests: 2,
+            minChunkSize: 20,          // Smaller chunks for faster streaming
+            maxChunkSize: 150,         // Not too large to ensure timely audio delivery
+            parallelGeneration: true,  // Generate audio chunks in parallel
+            maxParallelRequests: 3,    // Allow up to 3 concurrent TTS requests
         },
         tools: {
             getWeather: weatherTool,
@@ -94,6 +95,50 @@ Use tools when needed to provide accurate information.`,
 
     agent.on("audio_chunk", ({ chunkId, format, uint8Array }: { chunkId: number; format: string; uint8Array: Uint8Array }) => {
         console.log(`[ws-server] 🔊 Audio chunk #${chunkId}: ${uint8Array.length} bytes (${format})`);
+    });
+
+    // Log raw WebSocket messages for debugging
+    const originalSend = socket.send.bind(socket);
+
+    // Define a wrapper function to log messages before sending
+    function loggedSend(data: any): void {
+        let dataSize = 'unknown size';
+        if (typeof data === 'string') {
+            dataSize = `${data.length} chars`;
+        } else if (data instanceof Buffer || data instanceof ArrayBuffer) {
+            dataSize = `${Buffer.byteLength(data)} bytes`;
+        } else if (data instanceof Uint8Array) {
+            dataSize = `${data.byteLength} bytes`;
+        }
+        console.log(`[ws-server] → Sending WebSocket data (${dataSize})`);
+    }
+
+    // Create a proxy for the send method that logs but preserves original signatures
+    socket.send = function (data: any, optionsOrCallback?: any, callback?: (err?: Error) => void): void {
+        loggedSend(data);
+
+        if (typeof optionsOrCallback === 'function') {
+            // Handle the (data, callback) signature
+            return originalSend(data, optionsOrCallback);
+        } else if (optionsOrCallback) {
+            // Handle the (data, options, callback) signature
+            return originalSend(data, optionsOrCallback, callback);
+        } else {
+            // Handle the (data) signature
+            return originalSend(data);
+        }
+    };
+
+    socket.on('message', (data: any) => {
+        let dataSize = 'unknown size';
+        if (data instanceof Buffer) {
+            dataSize = `${data.length} bytes`;
+        } else if (data instanceof ArrayBuffer) {
+            dataSize = `${data.byteLength} bytes`;
+        } else if (typeof data === 'string') {
+            dataSize = `${data.length} chars`;
+        }
+        console.log(`[ws-server] ← Received WebSocket data (${dataSize})`);
     });
 
     agent.on("transcription", ({ text, language }: { text: string; language?: string }) => {

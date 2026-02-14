@@ -156,6 +156,7 @@ export class VoiceAgent extends EventEmitter {
     this.socket.on("message", async (data) => {
       try {
         const message = JSON.parse(data.toString());
+        console.log(`Received WebSocket message of type: ${message.type}`);
 
         // Handle transcribed text from the client/STT
         if (message.type === "transcript") {
@@ -165,6 +166,7 @@ export class VoiceAgent extends EventEmitter {
           }
           // Interrupt ongoing speech when user starts speaking (barge-in)
           this.interruptCurrentResponse("user_speaking");
+          console.log(`Processing transcript: "${message.text}"`);
           await this.enqueueInput(message.text);
         }
         // Handle raw audio data that needs transcription
@@ -175,10 +177,12 @@ export class VoiceAgent extends EventEmitter {
           }
           // Interrupt ongoing speech when user starts speaking (barge-in)
           this.interruptCurrentResponse("user_speaking");
-          await this.processAudioInput(message.data);
+          console.log(`Received audio data (${message.data.length / 1000}KB) for processing, format: ${message.format || 'unknown'}`);
+          await this.processAudioInput(message.data, message.format);
         }
         // Handle explicit interrupt request from client
         else if (message.type === "interrupt") {
+          console.log(`Received interrupt request: ${message.reason || "client_request"}`);
           this.interruptCurrentResponse(message.reason || "client_request");
         }
       } catch (err) {
@@ -246,17 +250,38 @@ export class VoiceAgent extends EventEmitter {
       throw new Error("Transcription model not configured");
     }
 
-    const result = await transcribe({
-      model: this.transcriptionModel,
-      audio: audioData,
-    });
+    console.log(`Sending ${audioData.byteLength} bytes to Whisper for transcription`);
 
-    this.emit("transcription", {
-      text: result.text,
-      language: result.language,
-    });
+    try {
+      // Note: The AI SDK transcribe function only accepts these parameters
+      // We can't directly pass language or temperature to it
+      const result = await transcribe({
+        model: this.transcriptionModel,
+        audio: audioData,
+        // If we need to pass additional options to OpenAI Whisper,
+        // we would need to do it via providerOptions if supported
+      });
 
-    return result.text;
+      console.log(`Whisper transcription result: "${result.text}", language: ${result.language || 'unknown'}`);
+
+      this.emit("transcription", {
+        text: result.text,
+        language: result.language,
+      });
+
+      // Also send transcription to client for immediate feedback
+      this.sendWebSocketMessage({
+        type: "transcription_result",
+        text: result.text,
+        language: result.language,
+      });
+
+      return result.text;
+    } catch (error) {
+      console.error("Whisper transcription failed:", error);
+      // Re-throw to be handled by the caller
+      throw error;
+    }
   }
 
   /**
@@ -472,13 +497,16 @@ export class VoiceAgent extends EventEmitter {
     }
 
     try {
+      console.log(`Generating audio for chunk ${chunk.id}: "${chunk.text.substring(0, 50)}${chunk.text.length > 50 ? '...' : ''}"`);
       const audioData = await this.generateSpeechFromText(
         chunk.text,
         this.currentSpeechAbortController.signal
       );
+      console.log(`Generated audio for chunk ${chunk.id}: ${audioData.length} bytes`);
       return audioData;
     } catch (error) {
       if ((error as Error).name === "AbortError") {
+        console.log(`Audio generation aborted for chunk ${chunk.id}`);
         return null; // Cancelled, don't report as error
       }
       console.error(`Failed to generate audio for chunk ${chunk.id}:`, error);
@@ -494,12 +522,15 @@ export class VoiceAgent extends EventEmitter {
     if (this.isSpeaking) return;
     this.isSpeaking = true;
 
+    console.log(`Starting speech queue processing with ${this.speechChunkQueue.length} chunks`);
     this.emit("speech_start", { streaming: true });
     this.sendWebSocketMessage({ type: "speech_stream_start" });
 
     try {
       while (this.speechChunkQueue.length > 0) {
         const chunk = this.speechChunkQueue[0];
+
+        console.log(`Processing speech chunk #${chunk.id} (${this.speechChunkQueue.length - 1} remaining)`);
 
         // Ensure audio generation has started
         if (!chunk.audioPromise) {
@@ -510,13 +541,17 @@ export class VoiceAgent extends EventEmitter {
         const audioData = await chunk.audioPromise;
 
         // Check if we were interrupted while waiting
-        if (!this.isSpeaking) break;
+        if (!this.isSpeaking) {
+          console.log(`Speech interrupted during chunk #${chunk.id}`);
+          break;
+        }
 
         // Remove from queue after processing
         this.speechChunkQueue.shift();
 
         if (audioData) {
           const base64Audio = Buffer.from(audioData).toString("base64");
+          console.log(`Sending audio chunk #${chunk.id} (${audioData.length} bytes, ${this.outputFormat})`);
 
           // Send audio chunk via WebSocket
           this.sendWebSocketMessage({
@@ -535,6 +570,8 @@ export class VoiceAgent extends EventEmitter {
             text: chunk.text,
             uint8Array: audioData,
           });
+        } else {
+          console.log(`No audio data generated for chunk #${chunk.id}`);
         }
 
         // Start generating next chunks in parallel
@@ -545,14 +582,20 @@ export class VoiceAgent extends EventEmitter {
             this.speechChunkQueue.length
           );
 
-          for (let i = 0; i < toStart; i++) {
-            const nextChunk = this.speechChunkQueue.find(c => !c.audioPromise);
-            if (nextChunk) {
-              nextChunk.audioPromise = this.generateChunkAudio(nextChunk);
+          if (toStart > 0) {
+            console.log(`Starting parallel generation for ${toStart} more chunks`);
+            for (let i = 0; i < toStart; i++) {
+              const nextChunk = this.speechChunkQueue.find(c => !c.audioPromise);
+              if (nextChunk) {
+                nextChunk.audioPromise = this.generateChunkAudio(nextChunk);
+              }
             }
           }
         }
       }
+    } catch (error) {
+      console.error("Error in speech queue processing:", error);
+      this.emit("error", error);
     } finally {
       this.isSpeaking = false;
       this.currentSpeechAbortController = undefined;
@@ -564,6 +607,7 @@ export class VoiceAgent extends EventEmitter {
         this.speechQueueDonePromise = undefined;
       }
 
+      console.log(`Speech queue processing complete`);
       this.sendWebSocketMessage({ type: "speech_stream_end" });
       this.emit("speech_complete", { streaming: true });
     }
@@ -600,7 +644,7 @@ export class VoiceAgent extends EventEmitter {
   /**
    * Process incoming audio data: transcribe and generate response
    */
-  private async processAudioInput(base64Audio: string): Promise<void> {
+  private async processAudioInput(base64Audio: string, format?: string): Promise<void> {
     if (!this.transcriptionModel) {
       this.emit("error", new Error("Transcription model not configured for audio input"));
       return;
@@ -624,16 +668,28 @@ export class VoiceAgent extends EventEmitter {
         return;
       }
 
-      this.emit("audio_received", { size: audioBuffer.length });
+      this.emit("audio_received", { size: audioBuffer.length, format });
+      console.log(`Processing audio input: ${audioBuffer.length} bytes, format: ${format || 'unknown'}`);
 
       const transcribedText = await this.transcribeAudio(audioBuffer);
+      console.log(`Transcribed text: "${transcribedText}"`);
 
       if (transcribedText.trim()) {
         await this.enqueueInput(transcribedText);
+      } else {
+        this.emit("warning", "Transcription returned empty text");
+        this.sendWebSocketMessage({
+          type: "transcription_error",
+          error: "Whisper returned empty text"
+        });
       }
     } catch (error) {
       console.error("Failed to process audio input:", error);
       this.emit("error", error);
+      this.sendWebSocketMessage({
+        type: "transcription_error",
+        error: `Transcription failed: ${(error as Error).message || String(error)}`
+      });
     }
   }
 
@@ -1110,7 +1166,20 @@ export class VoiceAgent extends EventEmitter {
 
     try {
       if (this.socket.readyState === WebSocket.OPEN) {
+        // Skip logging huge audio data for better readability
+        if (message.type === "audio_chunk" || message.type === "audio") {
+          const { data, ...rest } = message as any;
+          console.log(`Sending WebSocket message: ${message.type}`,
+            data ? `(${(data.length / 1000).toFixed(1)}KB audio data)` : "",
+            rest
+          );
+        } else {
+          console.log(`Sending WebSocket message: ${message.type}`);
+        }
+
         this.socket.send(JSON.stringify(message));
+      } else {
+        console.warn(`Cannot send message, socket state: ${this.socket.readyState}`);
       }
     } catch (error) {
       // Socket may have closed between the readyState check and send()
