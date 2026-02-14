@@ -96,10 +96,16 @@ Use tools when needed to provide accurate information.`,
         console.log(`[ws-server] 🔊 Audio chunk #${chunkId}: ${uint8Array.length} bytes (${format})`);
     });
 
+    agent.on("history_trimmed", ({ removedCount, reason }: { removedCount: number; reason: string }) => {
+        console.log(`[ws-server] 🧹 History trimmed: removed ${removedCount} messages (${reason})`);
+    });
+
     agent.on("error", (err: Error) => console.error("[ws-server] ❌ Error:", err.message));
 
     agent.on("disconnected", () => {
-        console.log("[ws-server] ✗ client disconnected\n");
+        // Permanently release all agent resources for this connection
+        agent.destroy();
+        console.log("[ws-server] ✗ client disconnected (agent destroyed)\n");
     });
 
     // Hand the accepted socket to the agent – this is the key line.

@@ -1,14 +1,18 @@
 # voice-agent-ai-sdk
 
-Streaming voice/text agent SDK built on AI SDK with optional WebSocket transport.
+Streaming voice/text agent SDK built on [AI SDK](https://sdk.vercel.ai/) with optional WebSocket transport.
 
-## Current status
+## Features
 
-- Streaming text generation is implemented via `streamText`.
-- Tool calling is supported in-stream.
-- Speech synthesis is implemented with chunked streaming TTS.
-- Audio transcription is supported (when `transcriptionModel` is configured).
-- WebSocket protocol events are emitted for stream, tool, and speech lifecycle.
+- **Streaming text generation** via AI SDK `streamText` with multi-step tool calling.
+- **Chunked streaming TTS** — text is split at sentence boundaries and converted to speech in parallel as the LLM streams, giving low time-to-first-audio.
+- **Audio transcription** via AI SDK `experimental_transcribe` (e.g. Whisper).
+- **Barge-in / interruption** — user speech cancels both the in-flight LLM stream and pending TTS, saving tokens and latency.
+- **Memory management** — configurable sliding-window on conversation history (`maxMessages`, `maxTotalChars`) and audio input size limits.
+- **Serial request queue** — concurrent `sendText` / audio inputs are queued and processed one at a time, preventing race conditions.
+- **Graceful lifecycle** — `disconnect()` aborts all in-flight work; `destroy()` permanently releases every resource.
+- **WebSocket transport** with a full protocol of stream, tool, and speech lifecycle events.
+- **Works without WebSocket** — call `sendText()` directly for text-only or server-side use.
 
 ## Prerequisites
 
@@ -60,6 +64,12 @@ const agent = new VoiceAgent({
       parallelGeneration: true,
       maxParallelRequests: 2,
    },
+   // Memory management (new in 0.1.0)
+   history: {
+      maxMessages: 50,       // keep last 50 messages
+      maxTotalChars: 100_000, // or trim when total chars exceed 100k
+   },
+   maxAudioInputSize: 5 * 1024 * 1024, // 5 MB limit
    endpoint: process.env.VOICE_WS_ENDPOINT,
    tools: { getWeather: weatherTool },
 });
@@ -86,40 +96,87 @@ if (process.env.VOICE_WS_ENDPOINT) {
 
 The agent accepts:
 
-- `model` (required): chat model
-- `transcriptionModel` (optional): STT model
-- `speechModel` (optional): TTS model
-- `instructions` (optional): system prompt
-- `stopWhen` (optional): stopping condition
-- `tools` (optional): AI SDK tools map
-- `endpoint` (optional): WebSocket endpoint
-- `voice` (optional): TTS voice, default `alloy`
-- `speechInstructions` (optional): style instructions for TTS
-- `outputFormat` (optional): audio format, default `mp3`
-- `streamingSpeech` (optional):
-    - `minChunkSize`
-    - `maxChunkSize`
-    - `parallelGeneration`
-    - `maxParallelRequests`
+| Option | Required | Default | Description |
+|---|---|---|---|
+| `model` | **yes** | — | AI SDK chat model (e.g. `openai("gpt-4o")`) |
+| `transcriptionModel` | no | — | AI SDK transcription model (e.g. `openai.transcription("whisper-1")`) |
+| `speechModel` | no | — | AI SDK speech model (e.g. `openai.speech("gpt-4o-mini-tts")`) |
+| `instructions` | no | `"You are a helpful voice assistant."` | System prompt |
+| `stopWhen` | no | `stepCountIs(5)` | Stopping condition for multi-step tool loops |
+| `tools` | no | `{}` | AI SDK tools map |
+| `endpoint` | no | — | Default WebSocket URL for `connect()` |
+| `voice` | no | `"alloy"` | TTS voice |
+| `speechInstructions` | no | — | Style instructions passed to the speech model |
+| `outputFormat` | no | `"mp3"` | Audio output format (`mp3`, `opus`, `wav`, …) |
+| `streamingSpeech` | no | see below | Streaming TTS chunk tuning |
+| `history` | no | see below | Conversation memory limits |
+| `maxAudioInputSize` | no | `10485760` (10 MB) | Maximum accepted audio input in bytes |
 
-### Common methods
+#### `streamingSpeech`
 
-- `sendText(text)` – process text input (streamed response)
-- `sendAudio(base64Audio)` – process base64 audio input
-- `sendAudioBuffer(buffer)` – process raw audio buffer input
-- `transcribeAudio(buffer)` – transcribe audio directly
-- `generateAndSendSpeechFull(text)` – non-streaming TTS fallback
-- `interruptSpeech(reason)` – interrupt streaming speech (barge‑in)
-- `connect(url?)` / `handleSocket(ws)` – WebSocket usage
+| Key | Default | Description |
+|---|---|---|
+| `minChunkSize` | `50` | Min characters before a sentence is sent to TTS |
+| `maxChunkSize` | `200` | Max characters per chunk (force-split at clause boundary) |
+| `parallelGeneration` | `true` | Start TTS for upcoming chunks while the current one plays |
+| `maxParallelRequests` | `3` | Cap on concurrent TTS requests |
 
-### Key events (from demo)
+#### `history`
 
-- `text` – user/assistant messages
-- `chunk:text_delta` – streaming text deltas
-- `chunk:tool_call` / `tool_result` – tool lifecycle
-- `speech_start` / `speech_complete` / `speech_interrupted`
-- `speech_chunk_queued` / `audio_chunk` / `audio`
-- `connected` / `disconnected`
+| Key | Default | Description |
+|---|---|---|
+| `maxMessages` | `100` | Max messages kept in history (0 = unlimited). Oldest are trimmed in pairs. |
+| `maxTotalChars` | `0` (unlimited) | Max total characters across all messages. Oldest are trimmed when exceeded. |
+
+### Methods
+
+| Method | Description |
+|---|---|
+| `sendText(text)` | Process text input. Returns a promise with the full assistant response. Requests are queued serially. |
+| `sendAudio(base64Audio)` | Transcribe base64 audio and process the result. |
+| `sendAudioBuffer(buffer)` | Same as above, accepts a raw `Buffer` / `Uint8Array`. |
+| `transcribeAudio(buffer)` | Transcribe audio to text without generating a response. |
+| `generateAndSendSpeechFull(text)` | Non-streaming TTS fallback (entire text at once). |
+| `interruptSpeech(reason?)` | Cancel in-flight TTS only (LLM stream keeps running). |
+| `interruptCurrentResponse(reason?)` | Cancel **both** the LLM stream and TTS. Used for barge-in. |
+| `connect(url?)` / `handleSocket(ws)` | Establish or attach a WebSocket. Safe to call multiple times. |
+| `disconnect()` | Close the socket and abort all in-flight work. |
+| `destroy()` | Permanently release all resources. The agent cannot be reused. |
+| `clearHistory()` | Clear conversation history. |
+| `getHistory()` / `setHistory(msgs)` | Read or restore conversation history. |
+| `registerTools(tools)` | Merge additional tools into the agent. |
+
+### Read-only properties
+
+| Property | Type | Description |
+|---|---|---|
+| `connected` | `boolean` | Whether a WebSocket is connected |
+| `processing` | `boolean` | Whether a request is currently being processed |
+| `speaking` | `boolean` | Whether audio is currently being generated / sent |
+| `pendingSpeechChunks` | `number` | Number of queued TTS chunks |
+| `destroyed` | `boolean` | Whether `destroy()` has been called |
+
+### Events
+
+| Event | Payload | When |
+|---|---|---|
+| `text` | `{ role, text }` | User input received or full assistant response ready |
+| `chunk:text_delta` | `{ id, text }` | Each streaming text token from the LLM |
+| `chunk:reasoning_delta` | `{ id, text }` | Each reasoning token (models that support it) |
+| `chunk:tool_call` | `{ toolName, toolCallId, input }` | Tool invocation detected |
+| `tool_result` | `{ name, toolCallId, result }` | Tool execution finished |
+| `speech_start` | `{ streaming }` | TTS generation begins |
+| `speech_complete` | `{ streaming }` | All TTS chunks sent |
+| `speech_interrupted` | `{ reason }` | Speech was cancelled (barge-in, disconnect, error) |
+| `speech_chunk_queued` | `{ id, text }` | A text chunk entered the TTS queue |
+| `audio_chunk` | `{ chunkId, data, format, text, uint8Array }` | One TTS chunk is ready |
+| `audio` | `{ data, format, uint8Array }` | Full non-streaming TTS audio |
+| `transcription` | `{ text, language }` | Audio transcription result |
+| `audio_received` | `{ size }` | Raw audio input received (before transcription) |
+| `history_trimmed` | `{ removedCount, reason }` | Oldest messages evicted from history |
+| `connected` / `disconnected` | — | WebSocket lifecycle |
+| `warning` | `string` | Non-fatal issues (empty input, etc.) |
+| `error` | `Error` | Errors from LLM, TTS, transcription, or WebSocket |
 
 ## Run (text-only check)
 
@@ -131,13 +188,13 @@ Expected logs include `text`, `chunk:text_delta`, tool events, and speech chunk 
 
 ## Run (WebSocket check)
 
-1. Start local WS server:
+1. Start the local WS server:
 
-   pnpm ws:server
+       pnpm ws:server
 
-2. In another terminal, run demo:
+2. In another terminal, run the demo:
 
-   pnpm demo
+       pnpm demo
 
 The demo will:
 - run `sendText()` first (text-only sanity check), then

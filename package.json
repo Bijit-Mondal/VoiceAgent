@@ -1,13 +1,13 @@
 {
   "name": "voice-agent-ai-sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Voice AI Agent with ai-sdk",
   "main": "src/index.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
     "demo": "tsx example/demo.ts",
-    "ws:server": "tsx example/ws-server.ts",
+    "ws:server": "tsx example/ws-server-2.ts",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
