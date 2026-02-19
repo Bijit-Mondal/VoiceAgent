@@ -4,8 +4,7 @@ exports.VoiceAgent = void 0;
 const ws_1 = require("ws");
 const events_1 = require("events");
 const ai_1 = require("ai");
-/** Default maximum audio input size (10 MB) */
-const DEFAULT_MAX_AUDIO_SIZE = 10 * 1024 * 1024;
+const types_1 = require("./types");
 class VoiceAgent extends events_1.EventEmitter {
     socket;
     tools = {};
@@ -52,22 +51,18 @@ class VoiceAgent extends events_1.EventEmitter {
         this.voice = options.voice || "alloy";
         this.speechInstructions = options.speechInstructions;
         this.outputFormat = options.outputFormat || "mp3";
-        this.maxAudioInputSize = options.maxAudioInputSize ?? DEFAULT_MAX_AUDIO_SIZE;
+        this.maxAudioInputSize = options.maxAudioInputSize ?? types_1.DEFAULT_MAX_AUDIO_SIZE;
         if (options.tools) {
             this.tools = { ...options.tools };
         }
         // Initialize streaming speech config with defaults
         this.streamingSpeechConfig = {
-            minChunkSize: 50,
-            maxChunkSize: 200,
-            parallelGeneration: true,
-            maxParallelRequests: 3,
+            ...types_1.DEFAULT_STREAMING_SPEECH_CONFIG,
             ...options.streamingSpeech,
         };
         // Initialize history config with defaults
         this.historyConfig = {
-            maxMessages: 100,
-            maxTotalChars: 0, // unlimited by default
+            ...types_1.DEFAULT_HISTORY_CONFIG,
             ...options.history,
         };
     }

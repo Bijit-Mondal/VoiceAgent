@@ -11,42 +11,14 @@ import {
   type TranscriptionModel,
   type SpeechModel,
 } from "ai";
-
-/**
- * Represents a chunk of text to be converted to speech
- */
-interface SpeechChunk {
-  id: number;
-  text: string;
-  audioPromise?: Promise<Uint8Array | null>;
-}
-
-/**
- * Configuration for streaming speech behavior
- */
-interface StreamingSpeechConfig {
-  /** Minimum characters before generating speech for a chunk */
-  minChunkSize: number;
-  /** Maximum characters per chunk (will split at sentence boundary before this) */
-  maxChunkSize: number;
-  /** Whether to enable parallel TTS generation */
-  parallelGeneration: boolean;
-  /** Maximum number of parallel TTS requests */
-  maxParallelRequests: number;
-}
-
-/**
- * Configuration for conversation history memory management
- */
-interface HistoryConfig {
-  /** Maximum number of messages to keep in history. When exceeded, oldest messages are trimmed. Set to 0 for unlimited. */
-  maxMessages: number;
-  /** Maximum total character count across all messages. When exceeded, oldest messages are trimmed. Set to 0 for unlimited. */
-  maxTotalChars: number;
-}
-
-/** Default maximum audio input size (10 MB) */
-const DEFAULT_MAX_AUDIO_SIZE = 10 * 1024 * 1024;
+import {
+  type SpeechChunk,
+  type StreamingSpeechConfig,
+  type HistoryConfig,
+  DEFAULT_STREAMING_SPEECH_CONFIG,
+  DEFAULT_HISTORY_CONFIG,
+  DEFAULT_MAX_AUDIO_SIZE,
+} from "./types";
 
 export interface VoiceAgentOptions {
   model: LanguageModel; // AI SDK Model for chat (e.g., openai('gpt-4o'))
@@ -126,17 +98,13 @@ export class VoiceAgent extends EventEmitter {
 
     // Initialize streaming speech config with defaults
     this.streamingSpeechConfig = {
-      minChunkSize: 50,
-      maxChunkSize: 200,
-      parallelGeneration: true,
-      maxParallelRequests: 3,
+      ...DEFAULT_STREAMING_SPEECH_CONFIG,
       ...options.streamingSpeech,
     };
 
     // Initialize history config with defaults
     this.historyConfig = {
-      maxMessages: 100,
-      maxTotalChars: 0, // unlimited by default
+      ...DEFAULT_HISTORY_CONFIG,
       ...options.history,
     };
   }

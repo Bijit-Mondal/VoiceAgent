@@ -5,3 +5,5 @@ node_modules
 .marscode
 
 # dist
+
+HOW_*.md

@@ -1,28 +1,7 @@
 import { WebSocket } from "ws";
 import { EventEmitter } from "events";
 import { streamText, LanguageModel, type Tool, type ModelMessage, type TranscriptionModel, type SpeechModel } from "ai";
-/**
- * Configuration for streaming speech behavior
- */
-interface StreamingSpeechConfig {
-    /** Minimum characters before generating speech for a chunk */
-    minChunkSize: number;
-    /** Maximum characters per chunk (will split at sentence boundary before this) */
-    maxChunkSize: number;
-    /** Whether to enable parallel TTS generation */
-    parallelGeneration: boolean;
-    /** Maximum number of parallel TTS requests */
-    maxParallelRequests: number;
-}
-/**
- * Configuration for conversation history memory management
- */
-interface HistoryConfig {
-    /** Maximum number of messages to keep in history. When exceeded, oldest messages are trimmed. Set to 0 for unlimited. */
-    maxMessages: number;
-    /** Maximum total character count across all messages. When exceeded, oldest messages are trimmed. Set to 0 for unlimited. */
-    maxTotalChars: number;
-}
+import { type StreamingSpeechConfig, type HistoryConfig } from "./types";
 export interface VoiceAgentOptions {
     model: LanguageModel;
     transcriptionModel?: TranscriptionModel;
@@ -238,5 +217,4 @@ export declare class VoiceAgent extends EventEmitter {
      */
     get destroyed(): boolean;
 }
-export {};
 //# sourceMappingURL=VoiceAgent.d.ts.map
