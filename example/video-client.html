@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video + Voice Agent Client</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 0 16px;
+            background: #f9fafb;
+            color: #111827;
+        }
+
+        h1 {
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 0.95rem;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        video {
+            width: 100%;
+            max-width: 520px;
+            border-radius: 10px;
+            background: #000;
+            aspect-ratio: 4 / 3;
+        }
+
+        button {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+            background: white;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        button.primary {
+            background: #2563eb;
+            color: white;
+            border-color: #2563eb;
+        }
+
+        button.danger {
+            background: #dc2626;
+            color: white;
+            border-color: #dc2626;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status {
+            font-weight: 600;
+            margin: 8px 0;
+            font-size: 0.95rem;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .dot.disconnected {
+            background: #9ca3af;
+        }
+
+        .dot.connected {
+            background: #22c55e;
+        }
+
+        .dot.listening {
+            background: #f59e0b;
+            animation: pulse 1.5s infinite;
+        }
+
+        .dot.speaking {
+            background: #3b82f6;
+            animation: pulse 1.2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0.6
+            }
+        }
+
+        #transcript,
+        #assistant,
+        #reasoning,
+        #tools {
+            min-height: 48px;
+            padding: 12px;
+            border-radius: 8px;
+            background: #f3f4f6;
+            border-left: 4px solid #9ca3af;
+            margin-bottom: 16px;
+            white-space: pre-wrap;
+        }
+
+        #transcript {
+            border-left-color: #2563eb;
+        }
+
+        #assistant {
+            border-left-color: #22c55e;
+        }
+
+        #reasoning {
+            border-left-color: #f59e0b;
+            font-style: italic;
+            color: #4b5563;
+        }
+
+        #tools {
+            border-left-color: #8b5cf6;
+            font-size: 0.9rem;
+        }
+
+        #log {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.82rem;
+            padding: 12px;
+            border-radius: 8px;
+            max-height: 240px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* ── Mic selector & level meter ── */
+        #micRow {
+            margin-bottom: 12px;
+        }
+
+        #micSelect {
+            flex: 1;
+            min-width: 180px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            border: 1px solid #d1d5db;
+        }
+
+        #refreshMicsBtn {
+            padding: 6px 12px;
+            font-size: 0.85rem;
+        }
+
+        .meter-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .meter-wrap label {
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        #levelMeter {
+            flex: 1;
+            height: 14px;
+            border-radius: 7px;
+            background: #e5e7eb;
+            overflow: hidden;
+        }
+
+        #levelBar {
+            height: 100%;
+            width: 0%;
+            border-radius: 7px;
+            background: #22c55e;
+            transition: width 60ms linear;
+        }
+
+        #levelBar.hot {
+            background: #ef4444;
+        }
+
+        #rmsValue {
+            font-family: monospace;
+            font-size: 0.8rem;
+            width: 56px;
+            text-align: right;
+        }
+
+        /* ── Push-to-talk ── */
+        #pttBtn {
+            padding: 10px 20px;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 10px;
+            border: 2px solid #2563eb;
+            background: #eff6ff;
+            color: #2563eb;
+            cursor: pointer;
+            user-select: none;
+            touch-action: none;
+        }
+
+        #pttBtn:active,
+        #pttBtn.active {
+            background: #dc2626;
+            color: white;
+            border-color: #dc2626;
+        }
+
+        #pttBtn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>📹 Video + Voice Agent</h1>
+    <p class="subtitle">Webcam + microphone → multimodal AI (vision + speech)</p>
+
+    <div class="card">
+        <video id="localVideo" autoplay playsinline muted></video>
+        <canvas id="frameCanvas" style="display:none"></canvas>
+
+        <div class="row" style="margin-top:16px">
+            <input type="text" id="wsEndpoint" value="ws://localhost:8081" style="flex:1; min-width:260px" />
+            <button id="connectBtn" class="primary">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+
+        <!-- ── Mic selector ── -->
+        <div class="row" id="micRow">
+            <label>Microphone:</label>
+            <select id="micSelect">
+                <option value="">-- click Refresh --</option>
+            </select>
+            <button id="refreshMicsBtn">🔄 Refresh</button>
+        </div>
+
+        <!-- ── Live level meter ── -->
+        <div class="meter-wrap">
+            <label>Mic level:</label>
+            <div id="levelMeter">
+                <div id="levelBar"></div>
+            </div>
+            <span id="rmsValue">0.000</span>
+        </div>
+
+        <div class="row">
+            <label>Input mode:</label>
+            <select id="inputMode">
+                <option value="browser-stt">Browser STT</option>
+                <option value="server-whisper">Server Whisper (VAD)</option>
+                <option value="push-to-talk" selected>Push-to-Talk</option>
+            </select>
+            <label>Frames:</label>
+            <select id="frameInterval">
+                <option value="3000">every 3s</option>
+                <option value="5000" selected>every 5s</option>
+                <option value="10000">every 10s</option>
+                <option value="0">manual only</option>
+            </select>
+        </div>
+
+        <div class="row">
+            <button id="startMediaBtn" disabled>📹🎤 Start Camera + Mic</button>
+            <button id="stopMediaBtn" disabled>⏹ Stop</button>
+            <button id="captureBtn" disabled>Capture Frame Now</button>
+            <button id="pttBtn" disabled>🎙 Hold to Talk</button>
+            <button id="interruptBtn" class="danger" disabled>✋ Interrupt</button>
+        </div>
+
+        <div class="status" id="status">
+            <span class="dot disconnected"></span>Disconnected
+        </div>
+    </div>
+
+    <h3>👤 You said</h3>
+    <div id="transcript">—</div>
+
+    <h3>🤖 Assistant</h3>
+    <div id="assistant"></div>
+
+    <div id="reasoningSection" class="hidden">
+        <h3>💭 Reasoning</h3>
+        <div id="reasoning"></div>
+    </div>
+
+    <div id="toolsSection" class="hidden">
+        <h3>🛠️ Tools</h3>
+        <div id="tools"></div>
+    </div>
+
+    <h3>📜 Log</h3>
+    <div id="log"></div>
+
+    <script>
+        // ────────────────────────────────────────────────────────────────
+        //  State & Elements
+        // ────────────────────────────────────────────────────────────────
+
+        const els = {
+            wsEndpoint: document.getElementById('wsEndpoint'),
+            connectBtn: document.getElementById('connectBtn'),
+            disconnectBtn: document.getElementById('disconnectBtn'),
+            inputMode: document.getElementById('inputMode'),
+            frameInterval: document.getElementById('frameInterval'),
+            startMediaBtn: document.getElementById('startMediaBtn'),
+            stopMediaBtn: document.getElementById('stopMediaBtn'),
+            captureBtn: document.getElementById('captureBtn'),
+            pttBtn: document.getElementById('pttBtn'),
+            interruptBtn: document.getElementById('interruptBtn'),
+            status: document.getElementById('status'),
+            transcript: document.getElementById('transcript'),
+            assistant: document.getElementById('assistant'),
+            reasoningSec: document.getElementById('reasoningSection'),
+            reasoning: document.getElementById('reasoning'),
+            toolsSec: document.getElementById('toolsSection'),
+            tools: document.getElementById('tools'),
+            log: document.getElementById('log'),
+            video: document.getElementById('localVideo'),
+            canvas: document.getElementById('frameCanvas'),
+            micSelect: document.getElementById('micSelect'),
+            refreshMicsBtn: document.getElementById('refreshMicsBtn'),
+            levelBar: document.getElementById('levelBar'),
+            rmsValue: document.getElementById('rmsValue'),
+        };
+
+        let ws = null;
+        let localStream = null;
+        let audioOnlyStream = null;   // ← ADD THIS
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let frameTimer = null;
+        let audioQueue = [];
+        let isPlaying = false;
+        let currentSource = null;
+
+        // Level-meter / VAD audio nodes (use browser-native sample rate)
+        let meterCtx = null;       // AudioContext for the meter (always running when media is on)
+        let meterAnalyser = null;
+        let meterSource = null;
+        let meterRafId = null;
+
+        // VAD-specific
+        let silenceStart = null;
+        let recordingStartTime = null;
+        const SPEECH_THRESHOLD = 0.015;
+        const SILENCE_THRESHOLD = 0.008;
+        const SILENCE_DURATION = 1400;   // ms
+        const MIN_RECORDING_TIME = 600;  // ms
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+
+        // ────────────────────────────────────────────────────────────────
+        //  Helpers
+        // ────────────────────────────────────────────────────────────────
+
+        function log(...args) {
+            const time = new Date().toLocaleTimeString([], { hour12: false });
+            const line = `[${time}] ${args.join(' ')}\n`;
+            els.log.textContent += line;
+            els.log.scrollTop = els.log.scrollHeight;
+        }
+
+        function setStatus(text, state = 'disconnected') {
+            els.status.innerHTML = `<span class="dot ${state}"></span>${text}`;
+        }
+
+        function enable(...btns) {
+            btns.forEach(b => { if (els[b]) els[b].disabled = false; });
+        }
+        function disable(...btns) {
+            btns.forEach(b => { if (els[b]) els[b].disabled = true; });
+        }
+
+        function resetUI() {
+            els.assistant.textContent = '';
+            els.reasoning.textContent = '';
+            els.tools.textContent = '';
+            els.reasoningSec.classList.add('hidden');
+            els.toolsSec.classList.add('hidden');
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Mic enumeration
+        // ────────────────────────────────────────────────────────────────
+
+        async function refreshMics() {
+            try {
+                // Need a temporary stream to get labelled device list
+                const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+                tmp.getTracks().forEach(t => t.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const mics = devices.filter(d => d.kind === 'audioinput');
+                els.micSelect.innerHTML = '';
+                mics.forEach((m, i) => {
+                    const opt = document.createElement('option');
+                    opt.value = m.deviceId;
+                    opt.textContent = m.label || `Microphone ${i + 1}`;
+                    els.micSelect.appendChild(opt);
+                });
+                log(`Found ${mics.length} microphone(s)`);
+            } catch (err) {
+                log('Mic enumeration failed:', err.message);
+            }
+        }
+
+        els.refreshMicsBtn.onclick = refreshMics;
+        // Auto-populate on page load
+        refreshMics();
+
+        // ────────────────────────────────────────────────────────────────
+        //  Live audio level meter (always-on when media is active)
+        //  Uses AnalyserNode + rAF – no ScriptProcessorNode needed.
+        // ────────────────────────────────────────────────────────────────
+
+        function startLevelMeter(stream) {
+            // Use the browser's native sample rate (NO custom sampleRate!)
+            meterCtx = new (window.AudioContext || window.webkitAudioContext)();
+            meterSource = meterCtx.createMediaStreamSource(stream);
+            meterAnalyser = meterCtx.createAnalyser();
+            meterAnalyser.fftSize = 1024;
+            meterSource.connect(meterAnalyser);
+            // Do NOT connect to destination – we don't want to hear ourselves
+
+            const buf = new Float32Array(meterAnalyser.fftSize);
+
+            function tick() {
+                meterAnalyser.getFloatTimeDomainData(buf);
+                let sum = 0;
+                for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+                const rms = Math.sqrt(sum / buf.length);
+
+                // Update UI
+                const pct = Math.min(rms / 0.15, 1) * 100;   // 0.15 is "loud"
+                els.levelBar.style.width = pct + '%';
+                els.levelBar.classList.toggle('hot', rms > SPEECH_THRESHOLD);
+                els.rmsValue.textContent = rms.toFixed(4);
+
+                // If VAD mode is active, drive it from here
+                if (els.inputMode.value === 'server-whisper') {
+                    vadTick(rms);
+                }
+
+                meterRafId = requestAnimationFrame(tick);
+            }
+            tick();
+            log(`Level meter started (sampleRate=${meterCtx.sampleRate})`);
+        }
+
+        function stopLevelMeter() {
+            if (meterRafId) { cancelAnimationFrame(meterRafId); meterRafId = null; }
+            if (meterSource) { meterSource.disconnect(); meterSource = null; }
+            if (meterAnalyser) { meterAnalyser.disconnect(); meterAnalyser = null; }
+            if (meterCtx) { meterCtx.close(); meterCtx = null; }
+            els.levelBar.style.width = '0%';
+            els.rmsValue.textContent = '0.000';
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Frame capture & send
+        // ────────────────────────────────────────────────────────────────
+
+        function captureFrame(reason = 'timer') {
+            if (!els.video.videoWidth) return;
+
+            const ctx = els.canvas.getContext('2d');
+            els.canvas.width = els.video.videoWidth;
+            els.canvas.height = els.video.videoHeight;
+            ctx.drawImage(els.video, 0, 0);
+
+            const dataUrl = els.canvas.toDataURL('image/webp', 0.78);
+            const base64 = dataUrl.split(',')[1];
+
+            if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'video_frame',
+                    sessionId: 'client-main',
+                    sequence: Date.now(),
+                    timestamp: Date.now(),
+                    triggerReason: reason,
+                    image: {
+                        data: base64,
+                        format: 'webp',
+                        width: els.canvas.width,
+                        height: els.canvas.height
+                    }
+                }));
+                log(`Frame sent (${(base64.length / 1000).toFixed(1)} kB) — ${reason}`);
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Audio playback queue
+        // ────────────────────────────────────────────────────────────────
+
+        async function playNext() {
+            if (isPlaying || audioQueue.length === 0) return;
+            isPlaying = true;
+
+            const { bytes, format } = audioQueue.shift();
+
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const buffer = await ctx.decodeAudioData(
+                    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+                );
+                const source = ctx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(ctx.destination);
+                currentSource = source;
+                source.onended = () => {
+                    currentSource = null;
+                    isPlaying = false;
+                    ctx.close();
+                    playNext();
+                };
+                source.start(0);
+                log(`Playing audio chunk (${bytes.length} bytes, ${format})`);
+            } catch (err) {
+                console.error('Audio decode/play error:', err);
+                isPlaying = false;
+                playNext();
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  WebSocket
+        // ────────────────────────────────────────────────────────────────
+
+        function connect() {
+            const url = els.wsEndpoint.value.trim();
+            if (!url) return log('No endpoint');
+
+            setStatus('Connecting...', 'disconnected');
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                setStatus('Connected', 'connected');
+                enable('startMediaBtn', 'interruptBtn', 'captureBtn');
+                disable('connectBtn');
+                enable('disconnectBtn');
+                log(`Connected to ${url}`);
+            };
+
+            ws.onclose = () => {
+                setStatus('Disconnected', 'disconnected');
+                disable('startMediaBtn', 'stopMediaBtn', 'captureBtn', 'interruptBtn', 'pttBtn');
+                enable('connectBtn');
+                disable('disconnectBtn');
+                stopAllMedia();
+                log('Disconnected');
+                ws = null;
+            };
+
+            ws.onerror = (e) => {
+                log('WebSocket error', e);
+                setStatus('Error', 'disconnected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleMessage(msg);
+                } catch (err) {
+                    log('Parse error:', err);
+                }
+            };
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+            stopAllMedia();
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Media (camera + mic)
+        // ────────────────────────────────────────────────────────────────
+
+        async function startMedia() {
+            try {
+                const audioConstraint = els.micSelect.value
+                    ? { deviceId: { exact: els.micSelect.value } }
+                    : true;
+
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: audioConstraint,
+                });
+
+                audioOnlyStream = new MediaStream(localStream.getAudioTracks());  // ← ADD THIS
+
+
+                // Log which mic was actually selected
+                const audioTrack = localStream.getAudioTracks()[0];
+                log(`Mic active: "${audioTrack?.label || 'unknown'}"`);
+
+                els.video.srcObject = localStream;
+                await els.video.play();
+
+                enable('stopMediaBtn', 'pttBtn');
+                disable('startMediaBtn');
+
+                // Start the always-on level meter
+                startLevelMeter(localStream);
+
+                // Periodic frames
+                const intervalMs = Number(els.frameInterval.value);
+                if (intervalMs > 0) {
+                    frameTimer = setInterval(() => captureFrame('timer'), intervalMs);
+                    log(`Frame capture every ${intervalMs / 1000}s`);
+                }
+
+                // Start the selected input mode
+                const mode = els.inputMode.value;
+                if (mode === 'browser-stt') {
+                    startBrowserSTT();
+                }
+                // VAD and push-to-talk don't need extra init – they're driven by
+                // the level-meter tick and button events respectively.
+
+                setStatus('Listening...', 'listening');
+                log(`Camera + Mic started, input mode: ${mode}`);
+            } catch (err) {
+                log('getUserMedia failed:', err.message);
+            }
+        }
+
+        function stopAllMedia() {
+            if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+
+            stopLevelMeter();
+
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                audioOnlyStream = null;
+                localStream = null;
+            }
+            els.video.srcObject = null;
+
+            if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
+            mediaRecorder = null;
+
+            if (recognition) recognition.stop();
+            recognition = null;
+
+            silenceStart = null;
+            recordingStartTime = null;
+            audioChunks = [];
+
+            disable('stopMediaBtn', 'pttBtn');
+            enable('startMediaBtn');
+            setStatus('Connected', 'connected');
+            log('Media stopped');
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Shared: record a segment from localStream and send it
+        // ────────────────────────────────────────────────────────────────
+
+        function chosenMimeType() {
+            for (const mt of [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+                'audio/mp4',
+            ]) {
+                if (MediaRecorder.isTypeSupported(mt)) return mt;
+            }
+            return '';  // let browser pick default
+        }
+
+        function startRecording() {
+            if (mediaRecorder?.state === 'recording') return;
+            if (!audioOnlyStream) { log('No audio stream!'); return; }
+
+            audioChunks = [];
+            recordingStartTime = Date.now();
+            silenceStart = null;
+
+            const mimeType = chosenMimeType();
+            const opts = mimeType ? { mimeType } : undefined;
+            mediaRecorder = new MediaRecorder(audioOnlyStream, opts);
+
+            mediaRecorder.ondataavailable = e => {
+                if (e.data.size > 0) audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const usedMime = mediaRecorder?.mimeType || mimeType || 'audio/webm';
+                if (audioChunks.length === 0) {
+                    log('No audio chunks recorded');
+                    setStatus('Listening...', 'listening');
+                    return;
+                }
+
+                const blob = new Blob(audioChunks, { type: usedMime });
+                if (blob.size < 800) {
+                    log(`Audio too short (${blob.size} bytes), skipping`);
+                    setStatus('Listening...', 'listening');
+                    return;
+                }
+
+                const arrayBuffer = await blob.arrayBuffer();
+                const base64 = btoa(
+                    new Uint8Array(arrayBuffer).reduce((d, b) => d + String.fromCharCode(b), '')
+                );
+
+                if (ws?.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'audio', data: base64, format: usedMime }));
+                    log(`Sent audio (${(base64.length / 1000).toFixed(1)} kB, ${usedMime})`);
+                    els.transcript.textContent = 'Transcribing...';
+                } else {
+                    log('WS not connected, audio dropped');
+                }
+
+                setStatus('Listening...', 'listening');
+            };
+
+            mediaRecorder.start(100);   // timeslice 100ms
+            setStatus('🔴 Recording...', 'speaking');
+            log('Recording started');
+        }
+
+        function stopRecording() {
+            if (mediaRecorder?.state === 'recording') {
+                mediaRecorder.stop();
+                silenceStart = null;
+                recordingStartTime = null;
+                setStatus('Processing...', 'connected');
+                log('Recording stopped, sending...');
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  VAD (driven from the level-meter rAF loop)
+        // ────────────────────────────────────────────────────────────────
+
+        function vadTick(rms) {
+            if (rms > SPEECH_THRESHOLD) {
+                silenceStart = null;
+                if (!mediaRecorder || mediaRecorder.state !== 'recording') {
+                    startRecording();
+                }
+            } else if (rms < SILENCE_THRESHOLD && mediaRecorder?.state === 'recording') {
+                if (!silenceStart) {
+                    silenceStart = Date.now();
+                } else if (Date.now() - silenceStart > SILENCE_DURATION) {
+                    if (recordingStartTime && (Date.now() - recordingStartTime) > MIN_RECORDING_TIME) {
+                        log('Silence → stopping');
+                        stopRecording();
+                    }
+                }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Push-to-Talk
+        // ────────────────────────────────────────────────────────────────
+
+        function pttDown() {
+            if (!localStream) return;
+            els.pttBtn.classList.add('active');
+            startRecording();
+        }
+
+        function pttUp() {
+            els.pttBtn.classList.remove('active');
+            stopRecording();
+        }
+
+        els.pttBtn.addEventListener('mousedown', pttDown);
+        els.pttBtn.addEventListener('mouseup', pttUp);
+        els.pttBtn.addEventListener('mouseleave', pttUp);
+        els.pttBtn.addEventListener('touchstart', e => { e.preventDefault(); pttDown(); });
+        els.pttBtn.addEventListener('touchend', e => { e.preventDefault(); pttUp(); });
+
+        // Spacebar push-to-talk (only when mode is push-to-talk)
+        let spaceHeld = false;
+        document.addEventListener('keydown', e => {
+            if (e.code === 'Space' && !spaceHeld && els.inputMode.value === 'push-to-talk'
+                && localStream && !e.target.matches('input, textarea, select')) {
+                e.preventDefault();
+                spaceHeld = true;
+                pttDown();
+            }
+        });
+        document.addEventListener('keyup', e => {
+            if (e.code === 'Space' && spaceHeld) {
+                e.preventDefault();
+                spaceHeld = false;
+                pttUp();
+            }
+        });
+
+        // ────────────────────────────────────────────────────────────────
+        //  Browser STT
+        // ────────────────────────────────────────────────────────────────
+
+        function startBrowserSTT() {
+            if (!SpeechRecognition) { log('Web Speech API not supported'); return; }
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = e => {
+                const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+                els.transcript.textContent = transcript;
+                if (e.results[0].isFinal) sendTranscript(transcript);
+            };
+
+            recognition.onerror = e => log('STT error:', e.error);
+            recognition.start();
+            log('Browser STT started');
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Sending transcript / interrupt
+        // ────────────────────────────────────────────────────────────────
+
+        function sendTranscript(text) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({ type: 'transcript', text }));
+            log(`Sent transcript: ${text}`);
+            resetUI();
+        }
+
+        function interrupt() {
+            if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'interrupt', reason: 'user_button' }));
+                log('Interrupt sent');
+            }
+            audioQueue = [];
+            if (currentSource) { currentSource.stop(); currentSource = null; }
+            isPlaying = false;
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Server → Client messages
+        // ────────────────────────────────────────────────────────────────
+
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'transcription_result':
+                    els.transcript.textContent = msg.text || '(empty)';
+                    log(`Transcription: ${msg.text}`);
+                    break;
+
+                case 'text_delta':
+                    els.assistant.textContent += msg.text || '';
+                    break;
+
+                case 'reasoning_delta':
+                    els.reasoningSec.classList.remove('hidden');
+                    els.reasoning.textContent += msg.text || '';
+                    break;
+
+                case 'tool_call':
+                case 'tool_result':
+                    els.toolsSec.classList.remove('hidden');
+                    els.tools.innerHTML += `<div>${msg.type}: ${msg.toolName || '?'} → ${JSON.stringify(msg.result || msg.input || {})}</div>`;
+                    break;
+
+                case 'audio_chunk':
+                case 'audio':
+                    const bytes = Uint8Array.from(atob(msg.data), c => c.charCodeAt(0));
+                    audioQueue.push({ bytes, format: msg.format || 'mp3' });
+                    playNext();
+                    break;
+
+                case 'speech_interrupted':
+                    audioQueue = [];
+                    if (currentSource) currentSource.stop();
+                    isPlaying = false;
+                    log(`Speech interrupted: ${msg.reason || '?'}`);
+                    break;
+
+                case 'response_complete':
+                    log('Response complete');
+                    break;
+
+                case 'capture_frame':
+                    log(`Server requested frame: ${msg.reason}`);
+                    captureFrame(msg.reason || 'server_request');
+                    break;
+
+                case 'frame_ack':
+                    break;   // silent
+
+                case 'session_init':
+                    log(`Session: ${msg.sessionId}`);
+                    break;
+
+                case 'stream_start':
+                    resetUI();
+                    break;
+
+                case 'stream_finish':
+                    log(`Stream finished: ${msg.finishReason}`);
+                    break;
+
+                case 'speech_stream_start':
+                    break;
+
+                case 'speech_stream_end':
+                    log('Speech done');
+                    break;
+
+                case 'error':
+                    log(`ERROR: ${msg.error}`);
+                    console.error('Server error:', msg.error);
+                    break;
+
+                case 'transcription_error':
+                    log(`Transcription error: ${msg.error}`);
+                    els.transcript.textContent = `Error: ${msg.error}`;
+                    break;
+
+                default:
+                    if (msg.type?.includes('stream') || msg.type?.includes('step')) {
+                        // verbose stream events – log quietly
+                    } else {
+                        log(`[${msg.type}]`);
+                    }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Event listeners
+        // ────────────────────────────────────────────────────────────────
+
+        els.connectBtn.onclick = connect;
+        els.disconnectBtn.onclick = disconnect;
+        els.startMediaBtn.onclick = startMedia;
+        els.stopMediaBtn.onclick = stopAllMedia;
+        els.captureBtn.onclick = () => captureFrame('manual');
+        els.interruptBtn.onclick = interrupt;
+
+        els.frameInterval.onchange = () => {
+            if (frameTimer) {
+                clearInterval(frameTimer);
+                const ms = Number(els.frameInterval.value);
+                if (ms > 0) frameTimer = setInterval(() => captureFrame('timer'), ms);
+            }
+        };
+
+        document.getElementById('wsEndpoint').addEventListener('keypress', e => {
+            if (e.key === 'Enter') connect();
+        });
+
+    </script>
+</body>
+
+</html>

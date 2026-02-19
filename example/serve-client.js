@@ -2,19 +2,19 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 3000;
+const PORT = 3102;
 
 // Create a simple HTTP server to serve the voice client HTML
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/index.html') {
-    const htmlPath = path.join(__dirname, 'voice-client.html');
+    const htmlPath = path.join(__dirname, 'video-client.html');
     fs.readFile(htmlPath, (err, data) => {
       if (err) {
         res.writeHead(500);
         res.end('Error loading voice-client.html');
         return;
       }
-      res.writeHead(200, {'Content-Type': 'text/html'});
+      res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(data);
     });
   } else {

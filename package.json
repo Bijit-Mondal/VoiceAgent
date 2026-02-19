@@ -15,6 +15,7 @@
     "demo": "tsx example/demo.ts",
     "ws:server": "tsx example/ws-server.ts",
     "client": "node example/serve-client.js",
+    "ws:video": "tsx example/ws-server-video.ts",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
