@@ -142,7 +142,6 @@ Use tools when needed to provide accurate information.`;
         this.socket.on("message", async (data) => {
             try {
                 const message = JSON.parse(data.toString());
-                console.log(`Received WebSocket message of type: ${message.type}`);
                 switch (message.type) {
                     // Handle transcribed text from the client/STT
                     case "transcript":
@@ -154,7 +153,6 @@ Use tools when needed to provide accurate information.`;
                         this.interruptCurrentResponse("user_speaking");
                         // Force capture current frame when user speaks
                         this.requestFrameCapture("user_request");
-                        console.log(`Processing transcript: "${message.text}"`);
                         await this.enqueueTextInput(message.text);
                         break;
                     // Handle raw audio data that needs transcription
@@ -167,8 +165,12 @@ Use tools when needed to provide accurate information.`;
                         this.interruptCurrentResponse("user_speaking");
                         // Force capture current frame when user speaks
                         this.requestFrameCapture("user_request");
-                        console.log(`Received audio data (${message.data.length / 1000}KB) for processing, format: ${message.format || "unknown"}`);
-                        await this.processAudioInput(message);
+                        try {
+                            await this.processAudioInput(message);
+                        }
+                        catch (audioError) {
+                            this.emit("error", audioError);
+                        }
                         break;
                     // Handle video frame from client
                     case "video_frame":
@@ -176,7 +178,6 @@ Use tools when needed to provide accurate information.`;
                         break;
                     // Handle explicit interrupt request from client
                     case "interrupt":
-                        console.log(`Received interrupt request: ${message.reason || "client_request"}`);
                         this.interruptCurrentResponse(message.reason || "client_request");
                         break;
                     // Handle client ready signal
@@ -184,22 +185,19 @@ Use tools when needed to provide accurate information.`;
                         this.handleClientReady(message);
                         break;
                     default:
-                        console.log(`Unknown message type: ${message.type}`);
+                        break;
                 }
             }
             catch (err) {
-                console.error("Failed to process message:", err);
                 this.emit("error", err);
             }
         });
         this.socket.on("close", () => {
-            console.log("Disconnected");
             this.isConnected = false;
             this.cleanupOnDisconnect();
             this.emit("disconnected");
         });
         this.socket.on("error", (error) => {
-            console.error("WebSocket error:", error);
             this.emit("error", error);
         });
     }
@@ -207,7 +205,6 @@ Use tools when needed to provide accurate information.`;
      * Handle client ready signal
      */
     handleClientReady(message) {
-        console.log(`Client ready, capabilities: ${JSON.stringify(message.capabilities || {})}`);
         // Send session info to client
         this.sendWebSocketMessage({
             type: "session_init",
@@ -259,10 +256,8 @@ Use tools when needed to provide accurate information.`;
                 sequence: frame.sequence,
                 timestamp: Date.now(),
             });
-            console.log(`Received frame #${frame.sequence} (${frame.triggerReason}): ${(frameSize / 1024).toFixed(1)}KB, ${frame.image.width}x${frame.image.height}`);
         }
         catch (error) {
-            console.error("Failed to handle video frame:", error);
             this.emit("error", error);
         }
     }
@@ -331,13 +326,11 @@ Use tools when needed to provide accurate information.`;
         if (!this.transcriptionModel) {
             throw new Error("Transcription model not configured");
         }
-        console.log(`Sending ${audioData.byteLength} bytes to Whisper for transcription`);
         try {
             const result = await (0, ai_1.experimental_transcribe)({
                 model: this.transcriptionModel,
                 audio: audioData,
             });
-            console.log(`Whisper transcription result: "${result.text}", language: ${result.language || "unknown"}`);
             this.emit("transcription", {
                 text: result.text,
                 language: result.language,
@@ -351,7 +344,6 @@ Use tools when needed to provide accurate information.`;
             return result.text;
         }
         catch (error) {
-            console.error("Whisper transcription failed:", error);
             throw error;
         }
     }
@@ -513,17 +505,13 @@ Use tools when needed to provide accurate information.`;
             this.currentSpeechAbortController = new AbortController();
         }
         try {
-            console.log(`Generating audio for chunk ${chunk.id}: "${chunk.text.substring(0, 50)}${chunk.text.length > 50 ? "..." : ""}"`);
             const audioData = await this.generateSpeechFromText(chunk.text, this.currentSpeechAbortController.signal);
-            console.log(`Generated audio for chunk ${chunk.id}: ${audioData.length} bytes`);
             return audioData;
         }
         catch (error) {
             if (error.name === "AbortError") {
-                console.log(`Audio generation aborted for chunk ${chunk.id}`);
                 return null;
             }
-            console.error(`Failed to generate audio for chunk ${chunk.id}:`, error);
             this.emit("error", error);
             return null;
         }
@@ -535,25 +523,21 @@ Use tools when needed to provide accurate information.`;
         if (this.isSpeaking)
             return;
         this.isSpeaking = true;
-        console.log(`Starting speech queue processing with ${this.speechChunkQueue.length} chunks`);
         this.emit("speech_start", { streaming: true });
         this.sendWebSocketMessage({ type: "speech_stream_start" });
         try {
             while (this.speechChunkQueue.length > 0) {
                 const chunk = this.speechChunkQueue[0];
-                console.log(`Processing speech chunk #${chunk.id} (${this.speechChunkQueue.length - 1} remaining)`);
                 if (!chunk.audioPromise) {
                     chunk.audioPromise = this.generateChunkAudio(chunk);
                 }
                 const audioData = await chunk.audioPromise;
                 if (!this.isSpeaking) {
-                    console.log(`Speech interrupted during chunk #${chunk.id}`);
                     break;
                 }
                 this.speechChunkQueue.shift();
                 if (audioData) {
                     const base64Audio = Buffer.from(audioData).toString("base64");
-                    console.log(`Sending audio chunk #${chunk.id} (${audioData.length} bytes, ${this.outputFormat})`);
                     this.sendWebSocketMessage({
                         type: "audio_chunk",
                         chunkId: chunk.id,
@@ -569,14 +553,10 @@ Use tools when needed to provide accurate information.`;
                         uint8Array: audioData,
                     });
                 }
-                else {
-                    console.log(`No audio data generated for chunk #${chunk.id}`);
-                }
                 if (this.streamingSpeechConfig.parallelGeneration) {
                     const activeRequests = this.speechChunkQueue.filter((c) => c.audioPromise).length;
                     const toStart = Math.min(this.streamingSpeechConfig.maxParallelRequests - activeRequests, this.speechChunkQueue.length);
                     if (toStart > 0) {
-                        console.log(`Starting parallel generation for ${toStart} more chunks`);
                         for (let i = 0; i < toStart; i++) {
                             const nextChunk = this.speechChunkQueue.find((c) => !c.audioPromise);
                             if (nextChunk) {
@@ -588,7 +568,6 @@ Use tools when needed to provide accurate information.`;
             }
         }
         catch (error) {
-            console.error("Error in speech queue processing:", error);
             this.emit("error", error);
         }
         finally {
@@ -599,7 +578,6 @@ Use tools when needed to provide accurate information.`;
                 this.speechQueueDoneResolve = undefined;
                 this.speechQueueDonePromise = undefined;
             }
-            console.log(`Speech queue processing complete`);
             this.sendWebSocketMessage({ type: "speech_stream_end" });
             this.emit("speech_complete", { streaming: true });
         }
@@ -631,7 +609,12 @@ Use tools when needed to provide accurate information.`;
      */
     async processAudioInput(audioMessage) {
         if (!this.transcriptionModel) {
-            this.emit("error", new Error("Transcription model not configured for audio input"));
+            const error = new Error("Transcription model not configured for audio input");
+            this.emit("error", error);
+            this.sendWebSocketMessage({
+                type: "error",
+                error: error.message,
+            });
             return;
         }
         try {
@@ -649,11 +632,9 @@ Use tools when needed to provide accurate information.`;
             this.emit("audio_received", {
                 size: audioBuffer.length,
                 format: audioMessage.format,
-                sessionId: audioMessage.sessionId,
+                sessionId: audioMessage.sessionId || this.sessionId,
             });
-            console.log(`Processing audio input: ${audioBuffer.length} bytes, format: ${audioMessage.format || "unknown"}`);
             const transcribedText = await this.transcribeAudio(audioBuffer);
-            console.log(`Transcribed text: "${transcribedText}"`);
             if (transcribedText.trim()) {
                 await this.enqueueTextInput(transcribedText);
             }
@@ -666,7 +647,6 @@ Use tools when needed to provide accurate information.`;
             }
         }
         catch (error) {
-            console.error("Failed to process audio input:", error);
             this.emit("error", error);
             this.sendWebSocketMessage({
                 type: "transcription_error",
@@ -796,8 +776,9 @@ Use tools when needed to provide accurate information.`;
      * Drain the input queue, processing one request at a time
      */
     async drainInputQueue() {
-        if (this.processingQueue)
+        if (this.processingQueue) {
             return;
+        }
         this.processingQueue = true;
         try {
             while (this.inputQueue.length > 0) {
@@ -889,7 +870,6 @@ Use tools when needed to provide accurate information.`;
                     }
                 },
                 onError: ({ error }) => {
-                    console.error("Stream error:", error);
                     this.emit("error", error);
                 },
             });
@@ -960,7 +940,6 @@ Use tools when needed to provide accurate information.`;
                     }
                 },
                 onError: ({ error }) => {
-                    console.error("Stream error:", error);
                     this.emit("error", error);
                 },
             });
@@ -1203,21 +1182,10 @@ Use tools when needed to provide accurate information.`;
             return;
         try {
             if (this.socket.readyState === ws_1.WebSocket.OPEN) {
-                if (message.type === "audio_chunk" || message.type === "audio") {
-                    const { data, ...rest } = message;
-                    console.log(`Sending WebSocket message: ${message.type}`, data ? `(${(data.length / 1000).toFixed(1)}KB audio data)` : "", rest);
-                }
-                else {
-                    console.log(`Sending WebSocket message: ${message.type}`);
-                }
                 this.socket.send(JSON.stringify(message));
-            }
-            else {
-                console.warn(`Cannot send message, socket state: ${this.socket.readyState}`);
             }
         }
         catch (error) {
-            console.error("Failed to send WebSocket message:", error);
             this.emit("error", error);
         }
     }
@@ -1225,14 +1193,12 @@ Use tools when needed to provide accurate information.`;
      * Start listening for voice/video input
      */
     startListening() {
-        console.log("Starting video agent...");
         this.emit("listening");
     }
     /**
      * Stop listening for voice/video input
      */
     stopListening() {
-        console.log("Stopping video agent...");
         this.emit("stopped");
     }
     /**

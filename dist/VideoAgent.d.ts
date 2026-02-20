@@ -53,6 +53,10 @@ interface FrameContext {
     description?: string;
 }
 export interface VideoAgentOptions {
+    /**
+     * AI SDK Model for chat. Must be a vision-enabled model (e.g., openai('gpt-4o'),
+     * anthropic('claude-3.5-sonnet'), google('gemini-1.5-pro')) to process video frames.
+     */
     model: LanguageModel;
     transcriptionModel?: TranscriptionModel;
     speechModel?: SpeechModel;
