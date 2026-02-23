@@ -1,5 +1,5 @@
 // Agents
-export { VoiceAgent, type VoiceAgentOptions } from "./VoiceAgent";
+export { VoiceAgent, type VoiceAgentOptions } from "./VoiceAgent.new";
 export {
     VideoAgent,
     type VideoAgentOptions,
@@ -8,7 +8,7 @@ export {
     type VideoAgentConfig,
     type FrameContext,
     type FrameTriggerReason,
-} from "./VideoAgent";
+} from "./VideoAgent.new";
 
 // Shared types
 export {

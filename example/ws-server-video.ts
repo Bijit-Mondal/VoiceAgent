@@ -1,7 +1,7 @@
 // ws-server-video.ts
 import "dotenv/config";
 import { WebSocketServer } from "ws";
-import { VideoAgent } from "../src/VideoAgent";   // adjust path
+import { VideoAgent } from "../src/VideoAgent.new";   // adjust path
 import { tool } from "ai";
 import { z } from "zod";
 import { openai } from "@ai-sdk/openai";
@@ -91,7 +91,7 @@ wss.on("connection", (socket) => {
 You can SEE what the user is showing via webcam.
 Describe what you see when it helps answer the question.
 Keep spoken answers concise and natural.`,
-        voice: "alloy",
+        voice: "echo",
         streamingSpeech: {
             minChunkSize: 25,
             maxChunkSize: 140,

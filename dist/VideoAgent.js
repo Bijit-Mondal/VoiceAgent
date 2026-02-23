@@ -71,7 +71,7 @@ Use tools when needed to provide accurate information.`;
         this.endpoint = options.endpoint;
         this.voice = options.voice || "alloy";
         this.speechInstructions = options.speechInstructions;
-        this.outputFormat = options.outputFormat || "mp3";
+        this.outputFormat = options.outputFormat || "opus";
         this.maxAudioInputSize = options.maxAudioInputSize ?? types_1.DEFAULT_MAX_AUDIO_SIZE;
         this.maxFrameInputSize = options.maxFrameInputSize ?? DEFAULT_MAX_FRAME_SIZE;
         // Generate or use provided session ID

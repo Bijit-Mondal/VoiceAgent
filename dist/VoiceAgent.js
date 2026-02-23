@@ -5,6 +5,25 @@ const ws_1 = require("ws");
 const events_1 = require("events");
 const ai_1 = require("ai");
 const types_1 = require("./types");
+/**
+ * A single-session voice agent that manages one WebSocket connection at a time.
+ *
+ * **Important:** Each `VoiceAgent` instance holds its own conversation history,
+ * input queue, speech state, and WebSocket. It is designed for **one user per
+ * instance**. To support multiple concurrent users, create a separate
+ * `VoiceAgent` for each connection:
+ *
+ * ```ts
+ * wss.on("connection", (socket) => {
+ *   const agent = new VoiceAgent({ model, ... });
+ *   agent.handleSocket(socket);
+ *   agent.on("disconnected", () => agent.destroy());
+ * });
+ * ```
+ *
+ * Sharing a single instance across multiple users will cause conversation
+ * history cross-contamination, interleaved audio, and unpredictable behavior.
+ */
 class VoiceAgent extends events_1.EventEmitter {
     socket;
     tools = {};
@@ -50,7 +69,7 @@ class VoiceAgent extends events_1.EventEmitter {
         this.endpoint = options.endpoint;
         this.voice = options.voice || "alloy";
         this.speechInstructions = options.speechInstructions;
-        this.outputFormat = options.outputFormat || "mp3";
+        this.outputFormat = options.outputFormat || "opus";
         this.maxAudioInputSize = options.maxAudioInputSize ?? types_1.DEFAULT_MAX_AUDIO_SIZE;
         if (options.tools) {
             this.tools = { ...options.tools };
@@ -576,6 +595,10 @@ class VoiceAgent extends events_1.EventEmitter {
      * Attach an existing WebSocket (server-side usage).
      * Use this when a WS server accepts a connection and you want the
      * agent to handle messages on that socket.
+     *
+     * **Note:** Calling this while a socket is already attached will cleanly
+     * tear down the previous connection first. Each `VoiceAgent` instance
+     * supports only one socket at a time — create a new agent per user.
      */
     handleSocket(socket) {
         this.ensureNotDestroyed();
